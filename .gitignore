@@ -1,0 +1,18 @@
+﻿# secrets / local
+.env
+.bridge-backups/
+*.bak
+
+# deps / build
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

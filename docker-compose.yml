@@ -1,0 +1,151 @@
+name: bridge-ecosystem
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/001-init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [bridge]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    networks: [bridge]
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes: [nats_data:/data]
+    ports: ["8222:8222"]
+    networks: [bridge]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    volumes:
+      - ./infra/keycloak/bridge-realm.json:/opt/keycloak/data/import/bridge-realm.json:ro
+    ports: ["8081:8080"]
+    networks: [bridge]
+
+  api:
+    build: ./services/platform-api
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      REDIS_URL: redis://redis:6379
+      BRIDGE_JWT_ISSUER: http://keycloak:8080/realms/bridge
+      BRIDGE_JWT_AUDIENCE: ${BRIDGE_JWT_AUDIENCE}
+      BRIDGE_AI_BASE_URL: ${BRIDGE_AI_BASE_URL}
+      BRIDGE_AI_API_KEY: ${BRIDGE_AI_API_KEY}
+      BRIDGE_AI_MODEL: ${BRIDGE_AI_MODEL}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_started}
+      redis: {condition: service_started}
+      keycloak: {condition: service_started}
+    ports: ["4000:4000"]
+    networks: [bridge]
+
+  provision-worker:
+    build: ./services/provision-worker
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_started}
+    networks: [bridge]
+
+  frontend-mcp:
+    build: ./services/frontend-mcp
+    environment:
+      PORT: 3100
+      BRIDGE_MCP_KEY: ${BRIDGE_MCP_KEY}
+    ports: ["3100:3100"]
+    networks: [bridge]
+
+  control-center:
+    build: ./apps/control-center
+    environment:
+      VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL}
+    depends_on: [api]
+    ports: ["5173:80"]
+    networks: [bridge]
+
+  wordpress-db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${WP_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${WP_DB_PASSWORD}
+    volumes: [wordpress_db:/var/lib/mysql]
+    networks: [bridge]
+
+  wordpress:
+    image: wordpress:7.1.0-php8.3-apache
+    depends_on: [wordpress-db]
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${WP_DB_PASSWORD}
+      BRIDGE_API_URL: http://api:4000
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./wordpress/plugins/bridge-connector:/var/www/html/wp-content/plugins/bridge-connector:ro
+    ports: ["8080:80"]
+    networks: [bridge]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    profiles: ["full"]
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["8123:8123"]
+    networks: [bridge]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["full"]
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    networks: [bridge]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: ["full"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: bridge-grafana-change-me
+    ports: ["3001:3000"]
+    networks: [bridge]
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:
+  wordpress_db:
+  wordpress_data:
+  clickhouse_data:
+
+networks:
+  bridge:
+    driver: bridge

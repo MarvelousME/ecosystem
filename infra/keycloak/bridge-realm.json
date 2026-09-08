@@ -1,0 +1,6 @@
+{
+  "realm":"bridge","enabled":true,"registrationAllowed":false,
+  "clients":[{"clientId":"bridge-api","publicClient":true,"directAccessGrantsEnabled":true,"standardFlowEnabled":true,"redirectUris":["http://localhost:5173/*"],"webOrigins":["http://localhost:5173"]}],
+  "roles":{"realm":[{"name":"platform_admin"},{"name":"tenant_admin"},{"name":"tenant_user"}]},
+  "users":[{"username":"bridgeadmin","enabled":true,"email":"admin@example.test","credentials":[{"type":"password","value":"BridgeAdmin!123","temporary":false}],"realmRoles":["platform_admin"]}]
+}

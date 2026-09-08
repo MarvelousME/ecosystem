@@ -1,0 +1,5 @@
+import pg from 'pg';
+import {connect,StringCodec} from 'nats';
+const {Pool}=pg;const db=new Pool({connectionString:process.env.DATABASE_URL});const nc=await connect({servers:process.env.NATS_URL});const sc=StringCodec();
+const sub=nc.subscribe('provision.requested');
+for await(const m of sub){const evt=JSON.parse(sc.decode(m.data));const {sagaId,tenantId,input}=evt;try{await db.query('update sagas set state=\'running\',step=1,updated_at=now() where id=$1',[sagaId]);await db.query('update sagas set step=2,updated_at=now() where id=$1',[sagaId]);await db.query('update sagas set step=3,updated_at=now() where id=$1',[sagaId]);await db.query('update sagas set state=\'completed\',step=4,updated_at=now() where id=$1',[sagaId]);nc.publish('provision.completed',sc.encode(JSON.stringify({sagaId,tenantId,input})));}catch(e){await db.query('update sagas set state=\'failed\',error=$2,updated_at=now() where id=$1',[sagaId,String(e)]);nc.publish('provision.failed',sc.encode(JSON.stringify({sagaId,tenantId,error:String(e)})));}}

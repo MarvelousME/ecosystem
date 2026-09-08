@@ -1,0 +1,27 @@
+name: bridge-ci
+on:
+  push:
+    branches: [main, bridge-ecosystem-platform]
+  pull_request:
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/platform-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run check
+      - run: npm run test:unit
+  php-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+      - run: php -l wordpress/plugins/bridge-connector/bridge-connector.php

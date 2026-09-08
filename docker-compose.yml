@@ -9,6 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/001-init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./infra/postgres/002-platform-expansion.sql:/docker-entrypoint-initdb.d/002-platform-expansion.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -54,6 +55,7 @@ services:
       BRIDGE_AI_MODEL: ${BRIDGE_AI_MODEL}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
       CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+      WORDPRESS_INTERNAL_URL: http://wordpress
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}

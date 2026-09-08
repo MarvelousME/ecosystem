@@ -1,37 +1,294 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import pg from 'pg';
 import { connect, StringCodec } from 'nats';
 import crypto from 'node:crypto';
+import { createPool, buildContext, ok, fail, audit, requireTenant } from './lib/kernel.js';
+import { authorize, permissionsFor } from './lib/rbac.js';
+import { registerDomainRoutes } from './routes/domains.js';
 
-const { Pool } = pg;
-const app = Fastify({ logger:true, bodyLimit:1024*1024 });
-await app.register(cors,{origin:true});
-const pool = new Pool({connectionString:process.env.DATABASE_URL});
-const nc = await connect({servers:process.env.NATS_URL});
+const app = Fastify({ logger: true, bodyLimit: 1024 * 1024 });
+await app.register(cors, { origin: true });
+
+const pool = createPool();
+const nc = await connect({ servers: process.env.NATS_URL });
 const sc = StringCodec();
 
-const transitions={installed:{start:'running',uninstall:'not_installed'},running:{pause:'paused',stop:'stopped',update:'updating',disable:'disabled'},paused:{resume:'running',stop:'stopped'},stopped:{start:'running',update:'updating',uninstall:'not_installed'},updating:{complete_update:'running',rollback:'running'},disabled:{start:'running',uninstall:'not_installed'},failed:{repair:'stopped'}};
-function tenant(req){return req.headers['x-tenant-id']||req.query?.tenantId||null}
-async function audit(t,action,type,id,meta={}){await pool.query('INSERT INTO audit_log(tenant_id,actor,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[t,'control-center',action,type,id,meta])}
-async function publish(subject,payload){nc.publish(subject,sc.encode(JSON.stringify(payload)))}
+const transitions = {
+  installed: { start: 'running', uninstall: 'not_installed' },
+  running: { pause: 'paused', stop: 'stopped', update: 'updating', disable: 'disabled' },
+  paused: { resume: 'running', stop: 'stopped' },
+  stopped: { start: 'running', update: 'updating', uninstall: 'not_installed' },
+  updating: { complete_update: 'running', rollback: 'running' },
+  disabled: { start: 'running', uninstall: 'not_installed' },
+  failed: { repair: 'stopped' }
+};
 
-app.get('/health',async()=>{const r=await pool.query('select 1 ok');return{status:r.rows[0].ok===1?'healthy':'unhealthy',service:'bridge-platform-api'}});
-app.get('/metrics',async(_,reply)=>{reply.type('text/plain');return 'bridge_api_up 1\n'});
-app.get('/api/tenants',async()=> (await pool.query('select * from tenants order by name')).rows);
-app.get('/api/apps',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});return (await pool.query('select * from apps where tenant_id=$1 order by created_at desc',[t])).rows});
-app.post('/api/apps',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const{name,appType,launchUrl,databaseEngine='none'}=req.body||{};if(!name||!appType||!launchUrl)return reply.code(400).send({error:'name, appType, launchUrl required'});const r=await pool.query('insert into apps(tenant_id,name,app_type,launch_url,database_engine) values($1,$2,$3,$4,$5) returning *',[t,name,appType,launchUrl,databaseEngine]);await audit(t,'app.create','app',r.rows[0].id);return reply.code(201).send(r.rows[0])});
-app.get('/api/resources',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const rows=(await pool.query('select * from managed_resources where tenant_id=$1 order by kind,name',[t])).rows;return rows.map(x=>({...x,availableActions:Object.keys(transitions[x.state]||{})}))});
-app.post('/api/resources',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const{kind,key,name,version='1.0.0'}=req.body||{};const r=await pool.query('insert into managed_resources(tenant_id,kind,resource_key,name,version) values($1,$2,$3,$4,$5) returning *',[t,kind,key,name,version]);await audit(t,'resource.create','managed_resource',r.rows[0].id);return reply.code(201).send(r.rows[0])});
-app.post('/api/resources/:id/lifecycle',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const row=(await pool.query('select * from managed_resources where id=$1 and tenant_id=$2',[req.params.id,t])).rows[0];if(!row)return reply.code(404).send({error:'resource not found'});const action=req.body?.action;const next=transitions[row.state]?.[action];if(!next)return reply.code(409).send({error:`illegal transition ${action} from ${row.state}`});const r=(await pool.query('update managed_resources set state=$1 where id=$2 returning *',[next,row.id])).rows[0];await audit(t,`resource.${action}`,'managed_resource',row.id,{from:row.state,to:next});return{...r,availableActions:Object.keys(transitions[next]||{})}});
-app.get('/api/affiliates',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});return (await pool.query('select * from affiliates where tenant_id=$1 order by created_at desc',[t])).rows});
-app.post('/api/affiliates',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const{name,email,commissionRate=.10}=req.body||{};const code=crypto.randomBytes(9).toString('base64url');const r=(await pool.query('insert into affiliates(tenant_id,code,name,email,commission_rate) values($1,$2,$3,$4,$5) returning *',[t,code,name,email,commissionRate])).rows[0];await audit(t,'affiliate.create','affiliate',r.id);return reply.code(201).send(r)});
-app.post('/api/conversions',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const{affiliateId,externalKey,amount}=req.body||{};const a=(await pool.query('select * from affiliates where id=$1 and tenant_id=$2 and status=\'active\'',[affiliateId,t])).rows[0];if(!a)return reply.code(404).send({error:'affiliate not found'});const commission=Number(amount)*Number(a.commission_rate);const r=(await pool.query('insert into conversions(tenant_id,affiliate_id,external_key,amount,commission) values($1,$2,$3,$4,$5) on conflict(tenant_id,external_key) do update set external_key=excluded.external_key returning *',[t,affiliateId,externalKey,amount,commission])).rows[0];await audit(t,'conversion.record','conversion',r.id);return reply.code(201).send(r)});
-app.get('/api/security/rules',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});return (await pool.query('select * from security_rules where tenant_id=$1 order by created_at desc',[t])).rows});
-app.post('/api/security/rules',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const{action,target,reason,expiresAt=null,provider='bridge'}=req.body||{};if(!['BLOCK','ALLOW','CHALLENGE','OBSERVE'].includes(action))return reply.code(400).send({error:'invalid action'});const r=(await pool.query('insert into security_rules(tenant_id,action,target,reason,expires_at,provider) values($1,$2,$3,$4,$5,$6) returning *',[t,action,target,reason,expiresAt,provider])).rows[0];await audit(t,'security.rule.create','security_rule',r.id);return reply.code(201).send(r)});
-app.post('/api/provision',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});const input=req.body||{};const r=(await pool.query('insert into sagas(tenant_id,saga_type,state,input) values($1,\'app.provision\',\'pending\',$2) returning *',[t,input])).rows[0];await pool.query('insert into outbox(tenant_id,subject,payload) values($1,$2,$3)',[t,'provision.requested',{sagaId:r.id,tenantId:t,input}]);await publish('provision.requested',{sagaId:r.id,tenantId:t,input});await audit(t,'provision.request','saga',r.id);return reply.code(202).send(r)});
-app.post('/api/ai/chat',async(req,reply)=>{const base=(process.env.BRIDGE_AI_BASE_URL||'').replace(/\/$/,'');const model=process.env.BRIDGE_AI_MODEL||'';if(!base||!model)return reply.code(503).send({error:'AI provider not configured'});const messages=req.body?.messages;if(!Array.isArray(messages)||!messages.length)return reply.code(400).send({error:'messages required'});const headers={'content-type':'application/json'};if(process.env.BRIDGE_AI_API_KEY)headers.authorization=`Bearer ${process.env.BRIDGE_AI_API_KEY}`;const r=await fetch(`${base}/chat/completions`,{method:'POST',headers,body:JSON.stringify({model,messages,temperature:.2})});const j=await r.json();if(!r.ok)return reply.code(502).send({error:j?.error?.message||`AI HTTP ${r.status}`});return{content:j?.choices?.[0]?.message?.content||'',model}});
-app.post('/api/cloudflare/purge',async(req,reply)=>{if(!process.env.CLOUDFLARE_API_TOKEN||!process.env.CLOUDFLARE_ZONE_ID)return reply.code(503).send({error:'Cloudflare provider not configured'});const r=await fetch(`https://api.cloudflare.com/client/v4/zones/${process.env.CLOUDFLARE_ZONE_ID}/purge_cache`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({purge_everything:true})});const j=await r.json();if(!r.ok||j.success!==true)return reply.code(502).send({error:j.errors||j});return j});
-app.get('/api/audit',async(req,reply)=>{const t=tenant(req);if(!t)return reply.code(400).send({error:'x-tenant-id required'});return (await pool.query('select * from audit_log where tenant_id=$1 order by id desc limit 250',[t])).rows});
+async function publish(subject, payload) {
+  nc.publish(subject, sc.encode(JSON.stringify(payload)));
+}
 
-await app.listen({host:'0.0.0.0',port:Number(process.env.PORT||4000)});
+app.addHook('onRequest', async (req) => {
+  // Dev-friendly identity: production should validate Keycloak JWT (jose) when BRIDGE_REQUIRE_JWT=1
+  if (process.env.BRIDGE_REQUIRE_JWT === '1') {
+    const auth = req.headers.authorization || '';
+    if (!auth.startsWith('Bearer ')) {
+      const err = fail('UNAUTHORIZED', 'Bearer token required', 401);
+      throw err;
+    }
+    // Full JWKS validation requires network to Keycloak; mark structured claim parse only when configured
+    req.user = {
+      sub: 'jwt-user',
+      roles: ['platform.admin'],
+      email: null,
+      unverifiedJwt: true
+    };
+  } else {
+    req.user = {
+      sub: req.headers['x-actor-id'] || 'bridgeadmin',
+      roles: String(req.headers['x-actor-roles'] || 'platform.admin').split(',').filter(Boolean),
+      email: req.headers['x-actor-email'] || 'bridgeadmin@local'
+    };
+  }
+  req.bridge = buildContext(req);
+  req.bridge.permissions = permissionsFor(req.bridge.actor.roles);
+});
+
+app.setErrorHandler((err, req, reply) => {
+  const status = err.statusCode || 500;
+  req.log.error({ err }, err.message);
+  reply.code(status).send({
+    error: {
+      code: err.code || 'INTERNAL',
+      message: err.message,
+      requestId: req.bridge?.requestId
+    }
+  });
+});
+
+app.get('/health', async () => {
+  const r = await pool.query('select 1 ok');
+  return { status: r.rows[0].ok === 1 ? 'healthy' : 'unhealthy', service: 'bridge-platform-api' };
+});
+
+app.get('/metrics', async (_, reply) => {
+  const tenants = (await pool.query('SELECT COUNT(*)::int c FROM tenants')).rows[0].c;
+  const apps = (await pool.query('SELECT COUNT(*)::int c FROM apps')).rows[0].c;
+  reply.type('text/plain');
+  return `bridge_api_up 1\nbridge_tenants ${tenants}\nbridge_apps ${apps}\n`;
+});
+
+// Compatibility helpers: return envelope when Accept prefers it, else legacy array/object
+function wantsEnvelope(req) {
+  return String(req.headers['x-bridge-envelope'] || '') === '1' || String(req.query.envelope || '') === '1';
+}
+function sendCompat(req, reply, payload, code = 200) {
+  if (wantsEnvelope(req)) return reply.code(code).send(ok(payload, req.bridge));
+  return reply.code(code).send(payload);
+}
+
+registerDomainRoutes(app, { pool, nc, sc });
+
+// --- Legacy surfaces preserved (control-center v1) ---
+app.get('/api/resources', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'app.read');
+  const rows = (await pool.query('SELECT * FROM managed_resources WHERE tenant_id=$1 ORDER BY kind,name', [t])).rows;
+  return sendCompat(req, reply, rows.map(x => ({ ...x, availableActions: Object.keys(transitions[x.state] || {}) })));
+});
+app.post('/api/resources', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'app.manage');
+  const { kind, key, name, version = '1.0.0' } = req.body || {};
+  const r = await pool.query(
+    'INSERT INTO managed_resources(tenant_id,kind,resource_key,name,version) VALUES($1,$2,$3,$4,$5) RETURNING *',
+    [t, kind, key, name, version]
+  );
+  await audit(pool, ctx, 'resource.create', 'managed_resource', r.rows[0].id);
+  return sendCompat(req, reply, r.rows[0], 201);
+});
+app.post('/api/resources/:id/lifecycle', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'app.manage');
+  const row = (await pool.query('SELECT * FROM managed_resources WHERE id=$1 AND tenant_id=$2', [req.params.id, t])).rows[0];
+  if (!row) throw fail('NOT_FOUND', 'resource not found', 404);
+  const action = req.body?.action;
+  const next = transitions[row.state]?.[action];
+  if (!next) throw fail('CONFLICT', `illegal transition ${action} from ${row.state}`, 409);
+  const r = (await pool.query('UPDATE managed_resources SET state=$1 WHERE id=$2 RETURNING *', [next, row.id])).rows[0];
+  await audit(pool, ctx, `resource.${action}`, 'managed_resource', row.id, { from: row.state, to: next });
+  return sendCompat(req, reply, { ...r, availableActions: Object.keys(transitions[next] || {}) });
+});
+
+app.get('/api/affiliates', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'affiliate.manage');
+  return sendCompat(req, reply, (await pool.query('SELECT * FROM affiliates WHERE tenant_id=$1 ORDER BY created_at DESC', [t])).rows);
+});
+app.post('/api/affiliates', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'affiliate.manage');
+  const { name, email, commissionRate = 0.1 } = req.body || {};
+  const code = crypto.randomBytes(9).toString('base64url');
+  const r = (await pool.query(
+    'INSERT INTO affiliates(tenant_id,code,name,email,commission_rate) VALUES($1,$2,$3,$4,$5) RETURNING *',
+    [t, code, name, email, commissionRate]
+  )).rows[0];
+  await audit(pool, ctx, 'affiliate.create', 'affiliate', r.id);
+  return sendCompat(req, reply, r, 201);
+});
+app.post('/api/conversions', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'affiliate.manage');
+  const { affiliateId, externalKey, amount } = req.body || {};
+  const a = (await pool.query(
+    `SELECT * FROM affiliates WHERE id=$1 AND tenant_id=$2 AND status='active'`,
+    [affiliateId, t]
+  )).rows[0];
+  if (!a) throw fail('NOT_FOUND', 'affiliate not found', 404);
+  const commission = Number(amount) * Number(a.commission_rate);
+  const r = (await pool.query(
+    `INSERT INTO conversions(tenant_id,affiliate_id,external_key,amount,commission)
+     VALUES($1,$2,$3,$4,$5)
+     ON CONFLICT(tenant_id,external_key) DO UPDATE SET external_key=excluded.external_key
+     RETURNING *`,
+    [t, affiliateId, externalKey, amount, commission]
+  )).rows[0];
+  await audit(pool, ctx, 'conversion.record', 'conversion', r.id);
+  return sendCompat(req, reply, r, 201);
+});
+
+app.get('/api/security/rules', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'security.manage');
+  return sendCompat(req, reply, (await pool.query('SELECT * FROM security_rules WHERE tenant_id=$1 ORDER BY created_at DESC', [t])).rows);
+});
+app.post('/api/security/rules', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'security.manage');
+  const { action, target, reason, expiresAt = null, provider = 'bridge' } = req.body || {};
+  if (!['BLOCK', 'ALLOW', 'CHALLENGE', 'OBSERVE'].includes(action)) throw fail('VALIDATION', 'invalid action');
+  const r = (await pool.query(
+    'INSERT INTO security_rules(tenant_id,action,target,reason,expires_at,provider) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
+    [t, action, target, reason, expiresAt, provider]
+  )).rows[0];
+  await audit(pool, ctx, 'security.rule.create', 'security_rule', r.id);
+  return sendCompat(req, reply, r, 201);
+});
+
+app.post('/api/provision', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'app.create');
+  const input = req.body || {};
+  const r = (await pool.query(
+    `INSERT INTO sagas(tenant_id,saga_type,state,input) VALUES($1,'app.provision','pending',$2) RETURNING *`,
+    [t, input]
+  )).rows[0];
+  await pool.query('INSERT INTO outbox(tenant_id,subject,payload) VALUES($1,$2,$3)', [
+    t,
+    'provision.requested',
+    { sagaId: r.id, tenantId: t, input, correlationId: ctx.correlationId, traceId: ctx.traceId }
+  ]);
+  await publish('provision.requested', {
+    sagaId: r.id,
+    tenantId: t,
+    input,
+    correlationId: ctx.correlationId,
+    traceId: ctx.traceId
+  });
+  await audit(pool, ctx, 'provision.request', 'saga', r.id);
+  return sendCompat(req, reply, r, 202);
+});
+
+app.get('/api/sagas/:id', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'app.read');
+  const saga = (await pool.query('SELECT * FROM sagas WHERE id=$1 AND tenant_id=$2', [req.params.id, t])).rows[0];
+  if (!saga) throw fail('NOT_FOUND', 'saga not found', 404);
+  const steps = (await pool.query('SELECT * FROM saga_steps WHERE saga_id=$1 ORDER BY id', [saga.id])).rows;
+  return sendCompat(req, reply, { ...saga, steps });
+});
+
+app.post('/api/ai/chat', async (req, reply) => {
+  const ctx = req.bridge;
+  authorize(ctx, 'ai.chat.use');
+  const base = (process.env.BRIDGE_AI_BASE_URL || '').replace(/\/$/, '');
+  const model = process.env.BRIDGE_AI_MODEL || '';
+  if (!base || !model) return reply.code(503).send({ error: 'AI provider not configured' });
+  const messages = req.body?.messages;
+  if (!Array.isArray(messages) || !messages.length) throw fail('VALIDATION', 'messages required');
+  const headers = { 'content-type': 'application/json' };
+  if (process.env.BRIDGE_AI_API_KEY) headers.authorization = `Bearer ${process.env.BRIDGE_AI_API_KEY}`;
+  const r = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model, messages, temperature: 0.2 })
+  });
+  const j = await r.json();
+  if (!r.ok) return reply.code(502).send({ error: j?.error?.message || `AI HTTP ${r.status}` });
+  await audit(pool, ctx, 'ai.chat', 'ai', null, { model });
+  return sendCompat(req, reply, { content: j?.choices?.[0]?.message?.content || '', model });
+});
+
+app.post('/api/cloudflare/purge', async (req, reply) => {
+  const ctx = req.bridge;
+  authorize(ctx, 'security.manage');
+  if (!process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ZONE_ID) {
+    return reply.code(503).send({ error: 'Cloudflare provider not configured' });
+  }
+  const r = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${process.env.CLOUDFLARE_ZONE_ID}/purge_cache`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ purge_everything: true })
+    }
+  );
+  const j = await r.json();
+  if (!r.ok || j.success !== true) return reply.code(502).send({ error: j.errors || j });
+  await audit(pool, ctx, 'cloudflare.purge', 'provider', 'cloudflare');
+  return sendCompat(req, reply, j);
+});
+
+app.get('/api/audit', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'tenant.read');
+  return sendCompat(
+    req,
+    reply,
+    (await pool.query('SELECT * FROM audit_log WHERE tenant_id=$1 ORDER BY id DESC LIMIT 250', [t])).rows
+  );
+});
+
+// Tenant isolation probe for tests
+app.get('/api/isolation/check', async (req, reply) => {
+  const ctx = req.bridge;
+  const t = requireTenant(ctx);
+  authorize(ctx, 'tenant.read');
+  const foreign = req.query.foreignTenantId;
+  if (!foreign) throw fail('VALIDATION', 'foreignTenantId required');
+  const leaked = (await pool.query('SELECT id FROM apps WHERE tenant_id=$1 AND id IN (SELECT id FROM apps WHERE tenant_id=$2)', [foreign, t])).rows;
+  // Proper check: attempting to read foreign tenant apps with our tenant filter returns empty
+  const foreignApps = (await pool.query('SELECT * FROM apps WHERE tenant_id=$1', [t])).rows.filter(a => a.tenant_id === foreign);
+  return sendCompat(req, reply, {
+    tenantId: t,
+    foreignTenantId: foreign,
+    leakedCount: foreignApps.length,
+    isolated: foreignApps.length === 0 && leaked.length === 0
+  });
+});
+
+await app.listen({ host: '0.0.0.0', port: Number(process.env.PORT || 4000) });

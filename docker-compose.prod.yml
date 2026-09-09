@@ -35,6 +35,9 @@ services:
       - ./infra/postgres/001-init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
       - ./infra/postgres/002-platform-expansion.sql:/docker-entrypoint-initdb.d/002-platform-expansion.sql:ro
       - ./infra/postgres/003-gap-closures.sql:/docker-entrypoint-initdb.d/003-gap-closures.sql:ro
+      - ./infra/postgres/004-production-capability-convergence.sql:/docker-entrypoint-initdb.d/004-production-capability-convergence.sql:ro
+      - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/docker-entrypoint-initdb.d/005-marketplace-agents-frontend-mcp.sql:ro
+      - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/docker-entrypoint-initdb.d/006-marketplace-agent-frontend-governance.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -53,6 +56,9 @@ services:
     volumes:
       - ./infra/postgres/migrations:/migrations:ro
       - ./infra/postgres/003-gap-closures.sql:/migrations/003-gap-closures.sql:ro
+      - ./infra/postgres/004-production-capability-convergence.sql:/migrations/004-production-capability-convergence.sql:ro
+      - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/migrations/005-marketplace-agents-frontend-mcp.sql:ro
+      - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/migrations/006-marketplace-agent-frontend-governance.sql:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,6 +120,7 @@ services:
       BRIDGE_REQUIRE_JWT: ${BRIDGE_REQUIRE_JWT:-1}
       BRIDGE_TRUST_HEADERS: ${BRIDGE_TRUST_HEADERS:-0}
       BRIDGE_SECRETS_PROVIDER: ${BRIDGE_SECRETS_PROVIDER:-aws-kms}
+      BRIDGE_ALLOW_LAB_SECRETS_IN_PROD: ${BRIDGE_ALLOW_LAB_SECRETS_IN_PROD:-0}
       BRIDGE_KMS_KEY_ID: ${BRIDGE_KMS_KEY_ID:-}
       AWS_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -189,7 +196,64 @@ services:
       BRIDGE_JS_MAX_DELIVER: ${BRIDGE_JS_MAX_DELIVER:-5}
       MONGODB_URL: ${MONGODB_URL:-}
       MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+      MSSQL_ENCRYPT: ${MSSQL_ENCRYPT:-1}
+      MSSQL_TRUST_CERT: ${MSSQL_TRUST_CERT:-0}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      outbox-relay:
+        condition: service_started
+    networks: [bridge]
+    restart: unless-stopped
+
+  install-worker:
+    build: ./services/install-worker
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      BRIDGE_JS_DURABLE: ${BRIDGE_INSTALL_JS_DURABLE:-INSTALL_WORKER_V1}
+      BRIDGE_JS_FILTER: ${BRIDGE_INSTALL_JS_FILTER:-install.requested}
+      BRIDGE_JS_ACK_WAIT_NS: ${BRIDGE_JS_ACK_WAIT_NS:-30000000000}
+      BRIDGE_JS_MAX_DELIVER: ${BRIDGE_JS_MAX_DELIVER:-5}
+      MONGODB_URL: ${MONGODB_URL:-}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+      MSSQL_ENCRYPT: ${MSSQL_ENCRYPT:-1}
+      MSSQL_TRUST_CERT: ${MSSQL_TRUST_CERT:-0}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      outbox-relay:
+        condition: service_started
+    networks: [bridge]
+    restart: unless-stopped
+
+  agent-worker:
+    build: ./services/agent-worker
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      BRIDGE_JS_DURABLE: ${BRIDGE_AGENT_JS_DURABLE:-AGENT_WORKER_V1}
+      BRIDGE_JS_ACK_WAIT_NS: ${BRIDGE_JS_ACK_WAIT_NS:-30000000000}
+      BRIDGE_JS_MAX_DELIVER: ${BRIDGE_JS_MAX_DELIVER:-5}
+      BRIDGE_AI_BASE_URL: ${BRIDGE_AI_BASE_URL:-}
+      BRIDGE_AI_API_KEY: ${BRIDGE_AI_API_KEY:-}
+      BRIDGE_AI_MODEL: ${BRIDGE_AI_MODEL:-}
     depends_on:
       db-migrate:
         condition: service_completed_successfully
@@ -211,9 +275,18 @@ services:
     restart: unless-stopped
 
   control-center:
-    build: ./apps/control-center
-    environment:
-      VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL}
+    build:
+      context: ./apps/control-center
+      args:
+        VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL:-https://api.${BRIDGE_DOMAIN}}
+        VITE_OIDC_AUTHORITY: ${VITE_OIDC_AUTHORITY:-https://auth.${BRIDGE_DOMAIN}/realms/bridge}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-bridge-control-center}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-https://control.${BRIDGE_DOMAIN}/auth/callback}
+        VITE_OIDC_POST_LOGOUT_REDIRECT_URI: ${VITE_OIDC_POST_LOGOUT_REDIRECT_URI:-https://control.${BRIDGE_DOMAIN}/}
+        VITE_OIDC_SCOPE: ${VITE_OIDC_SCOPE:-openid profile email}
+        VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-1}
+        VITE_REQUIRE_AUTH: ${VITE_REQUIRE_AUTH:-1}
+        VITE_PUCK_HOST_URL: ${VITE_PUCK_HOST_URL:-https://puck.${BRIDGE_DOMAIN}}
     depends_on: [api]
     labels:
       - traefik.enable=true
@@ -224,6 +297,24 @@ services:
       - traefik.http.routers.control.tls.certresolver=letsencrypt
       - traefik.http.routers.control.middlewares=bridge-sec-headers@file
       - traefik.http.services.control.loadbalancer.server.port=80
+    networks: [bridge]
+    restart: unless-stopped
+
+  puck-host:
+    build:
+      context: ./apps/puck-host
+      args:
+        VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL:-https://api.${BRIDGE_DOMAIN}}
+    depends_on: [api]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=bridge-ecosystem_bridge
+      - traefik.http.routers.puck.rule=Host(`puck.${BRIDGE_DOMAIN}`)
+      - traefik.http.routers.puck.entrypoints=websecure
+      - traefik.http.routers.puck.tls=true
+      - traefik.http.routers.puck.tls.certresolver=letsencrypt
+      - traefik.http.routers.puck.middlewares=bridge-sec-headers@file
+      - traefik.http.services.puck.loadbalancer.server.port=80
     networks: [bridge]
     restart: unless-stopped
 

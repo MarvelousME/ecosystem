@@ -1,5 +1,5 @@
 import { For, Show, createResource, createSignal, onMount } from 'solid-js';
-import { platformApi } from '~/api/platform';
+import { platformApi, type AgentInstance, type AgentTemplate } from '~/api/platform';
 import { workspaceStore } from '~/stores/workspace';
 import { pageEnter } from '~/motion/registry';
 
@@ -7,11 +7,13 @@ export function AgentsPage() {
   let root!: HTMLElement;
   const [templates] = createResource(() => platformApi.agents.templates());
   const [instances, { refetch }] = createResource(() => workspaceStore.tenantId, () => platformApi.agents.instances());
-  const [selectedTemplate, setSelectedTemplate] = createSignal<any>(null);
-  const [selectedInstance, setSelectedInstance] = createSignal<any>(null);
+  const [selectedTemplate, setSelectedTemplate] = createSignal<AgentTemplate | null>(null);
+  const [selectedInstance, setSelectedInstance] = createSignal<AgentInstance | null>(null);
   const [instantiating, setInstantiating] = createSignal(false);
   const [newInstanceKey, setNewInstanceKey] = createSignal('');
   const [newInstanceName, setNewInstanceName] = createSignal('');
+  const [executionPrompt, setExecutionPrompt] = createSignal('');
+  const [executing, setExecuting] = createSignal(false);
   const [message, setMessage] = createSignal('');
   onMount(() => pageEnter(root));
 
@@ -20,7 +22,8 @@ export function AgentsPage() {
       setMessage('Please select a tenant first');
       return;
     }
-    if (!selectedTemplate() || !newInstanceKey() || !newInstanceName()) {
+    const template = selectedTemplate();
+    if (!template || !newInstanceKey() || !newInstanceName()) {
       setMessage('Template, agent key, and name are required');
       return;
     }
@@ -29,10 +32,10 @@ export function AgentsPage() {
     setMessage('');
     try {
       await platformApi.agents.instantiate({
-        templateKey: selectedTemplate().template_key,
+        templateKey: template.template_key,
         agentKey: newInstanceKey(),
         name: newInstanceName(),
-        description: selectedTemplate().description,
+        description: template.description,
         config: {}
       });
       setMessage('Agent instantiated successfully');
@@ -69,6 +72,23 @@ export function AgentsPage() {
     }
   }
 
+  async function executeInstance() {
+    const instance = selectedInstance();
+    const prompt = executionPrompt().trim();
+    if (!instance || !prompt) { setMessage('Enter an execution prompt'); return; }
+    setExecuting(true);
+    try {
+      const execution = await platformApi.agents.executeInstance(instance.id, { prompt });
+      setMessage(`Execution ${(execution as any).id} queued for governed processing`);
+      setExecutionPrompt('');
+      await viewInstance(instance.id);
+    } catch (e: any) {
+      setMessage(`Failed to queue execution: ${e.message}`);
+    } finally {
+      setExecuting(false);
+    }
+  }
+
   return (
     <section ref={root!}>
       <div class="page-header">
@@ -90,8 +110,8 @@ export function AgentsPage() {
           <p style={{ color: 'var(--bridge-text-muted)', 'font-size': '0.9rem', 'margin-bottom': '1rem' }}>
             Platform-provided agent templates
           </p>
-          <For each={templates()}>
-            {(template: any) => (
+          <For each={templates() || []}>
+            {(template) => (
               <div style={{ 'margin-bottom': '1rem', 'padding': '0.5rem', 'border': '1px solid var(--bridge-border)', 'border-radius': '4px' }}>
                 <h4 style={{ margin: '0 0 0.2rem' }}>{template.name}</h4>
                 <p style={{ 'font-size': '0.85rem', color: 'var(--bridge-text-muted)', margin: '0.2rem 0' }}>
@@ -118,8 +138,8 @@ export function AgentsPage() {
           <p style={{ color: 'var(--bridge-text-muted)', 'font-size': '0.9rem', 'margin-bottom': '1rem' }}>
             Tenant-scoped agent instances
           </p>
-          <For each={instances()}>
-            {(instance: any) => (
+          <For each={instances() || []}>
+            {(instance) => (
               <div style={{ 'margin-bottom': '1rem', 'padding': '0.5rem', 'border': '1px solid var(--bridge-border)', 'border-radius': '4px' }}>
                 <h4 style={{ margin: '0 0 0.2rem' }}>{instance.name}</h4>
                 <p style={{ 'font-size': '0.85rem', color: 'var(--bridge-text-muted)', margin: '0.2rem 0' }}>
@@ -154,19 +174,19 @@ export function AgentsPage() {
 
       <Show when={selectedTemplate()}>
         <div class="panel panel-pad" style={{ 'margin-top': '1rem' }}>
-          <h3>Instantiate: {selectedTemplate().name}</h3>
-          <p>{selectedTemplate().description}</p>
+          <h3>Instantiate: {selectedTemplate()!.name}</h3>
+          <p>{selectedTemplate()!.description}</p>
           
           <h4>Skills</h4>
           <ul>
-            <For each={selectedTemplate().skills || []}>
+            <For each={selectedTemplate()!.skills || []}>
               {(skill: string) => <li>{skill}</li>}
             </For>
           </ul>
           
           <h4>Capabilities</h4>
           <ul>
-            <For each={selectedTemplate().capabilities || []}>
+            <For each={selectedTemplate()!.capabilities || []}>
               {(cap: string) => <li>{cap}</li>}
             </For>
           </ul>
@@ -216,33 +236,33 @@ export function AgentsPage() {
 
       <Show when={selectedInstance()}>
         <div class="panel panel-pad" style={{ 'margin-top': '1rem' }}>
-          <h3>{selectedInstance().name}</h3>
-          <p>Agent Key: {selectedInstance().agent_key}</p>
-          <p>Description: {selectedInstance().description || 'No description'}</p>
-          <p>Model: {selectedInstance().model || 'Default'}</p>
+          <h3>{selectedInstance()!.name}</h3>
+          <p>Agent Key: {selectedInstance()!.agent_key}</p>
+          <p>Description: {selectedInstance()!.description || 'No description'}</p>
+          <p>Model: {selectedInstance()!.model || 'Default'}</p>
           
           <h4>Skills</h4>
           <ul>
-            <For each={selectedInstance().skills || []}>
+            <For each={selectedInstance()!.skills || []}>
               {(skill: string) => <li>{skill}</li>}
             </For>
           </ul>
           
           <h4>Capabilities</h4>
           <ul>
-            <For each={selectedInstance().capabilities || []}>
+            <For each={selectedInstance()!.capabilities || []}>
               {(cap: string) => <li>{cap}</li>}
             </For>
           </ul>
 
           <h4>Configuration</h4>
           <pre style={{ 'font-family': 'var(--bridge-mono)', 'font-size': '0.8rem', 'background': 'var(--bridge-bg-secondary)', padding: '1rem', 'border-radius': '4px' }}>
-            {JSON.stringify(selectedInstance().config, null, 2)}
+            {JSON.stringify(selectedInstance()!.config, null, 2)}
           </pre>
 
           <h4>Recent Executions</h4>
           <ul>
-            <For each={selectedInstance().executions || []}>
+            <For each={selectedInstance()!.executions || []}>
               {(exec: any) => (
                 <li>
                   {exec.goal} - {exec.status} ({new Date(exec.created_at).toLocaleString()})
@@ -251,10 +271,26 @@ export function AgentsPage() {
             </For>
           </ul>
 
+          <label style={{ display: 'block', 'margin-top': '1rem' }}>
+            Execution prompt
+            <textarea
+              class="input"
+              rows={3}
+              value={executionPrompt()}
+              onInput={(e) => setExecutionPrompt(e.currentTarget.value)}
+              placeholder="Describe the plan or analysis you need"
+              style={{ display: 'block', width: '100%', 'margin-top': '0.35rem' }}
+            />
+          </label>
+          <button class="btn btn-primary" type="button" disabled={executing() || !executionPrompt().trim()} onClick={executeInstance} style={{ 'margin-top': '0.75rem' }}>
+            {executing() ? 'Queueing...' : 'Run agent'}
+          </button>
+
           <button
             class="btn"
             type="button"
             onClick={() => setSelectedInstance(null)}
+            style={{ 'margin-left': '0.5rem' }}
           >
             Close
           </button>

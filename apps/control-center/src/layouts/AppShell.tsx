@@ -20,6 +20,7 @@ const FALLBACK_NAV: NavItem[] = [
   { id: 'affiliates', label: 'Affiliates', href: '/affiliates', section: 'Commerce' },
   { id: 'infra', label: 'Infrastructure', href: '/infrastructure', section: 'Infrastructure' },
   { id: 'ecosystem', label: 'Ecosystem', href: '/ecosystem', section: 'Ecosystem' },
+  { id: 'frontend-mcp', label: 'Frontend MCP', href: '/ecosystem/frontend-mcp', section: 'Ecosystem' },
   { id: 'security', label: 'Security', href: '/security', section: 'Security' },
   { id: 'operations', label: 'Operations', href: '/operations', section: 'Operations' },
   { id: 'audit', label: 'Audit', href: '/governance', section: 'Governance' },

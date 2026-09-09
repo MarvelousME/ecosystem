@@ -4,18 +4,31 @@
 
 export function createBuilderProviders({ pool }) {
   return {
-    async puckSchema() {
+    async puckSchema({ tenantId = null, applicationId = null } = {}) {
       const components = (await pool.query('SELECT id, category, schema FROM visual_components ORDER BY category,id')).rows;
+      const installed = tenantId && applicationId
+        ? (await pool.query(
+            `SELECT c.component_key, c.name, c.category, c.props_schema
+             FROM frontend_installations i JOIN frontend_components c ON c.id=i.component_id
+             WHERE i.tenant_id=$1 AND i.application_id=$2 AND i.state='READY' AND c.status='APPROVED'
+             ORDER BY c.category,c.name`, [tenantId, applicationId]
+          )).rows
+        : [];
       return {
         provider: 'puck-builder',
         contract: 'IVisualBuilderProvider',
         status: 'READY',
         categories: [...new Set(components.map((c) => c.category))],
-        components: components.map((c) => ({
+        components: [...components.map((c) => ({
           type: c.id,
           category: c.category,
           fields: Object.fromEntries((c.schema?.props || []).map((p) => [p, { type: 'text' }]))
-        })),
+        })), ...installed.map((c) => ({
+          type: `Bridge/${c.component_key}`,
+          category: c.category,
+          label: c.name,
+          fields: Object.fromEntries(Object.keys(c.props_schema?.properties || {}).map((key) => [key, { type: 'text' }]))
+        }))],
         root: { props: { title: { type: 'text' } } }
       };
     },

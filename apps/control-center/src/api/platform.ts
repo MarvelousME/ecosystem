@@ -1,5 +1,105 @@
 import { apiFetch } from './client';
 
+export type ApiRecord = Record<string, unknown>;
+
+export type MarketplaceVersion = ApiRecord & {
+  id: string;
+  version: string;
+  changelog?: string | null;
+  requires_entitlement?: string | null;
+};
+
+export type MarketplacePackage = ApiRecord & {
+  id: string;
+  package_key: string;
+  name: string;
+  description?: string | null;
+  publisher_id: string;
+  category: string;
+  featured?: boolean;
+  documentation_url?: string | null;
+  source_url?: string | null;
+  versions?: MarketplaceVersion[];
+};
+
+export type MarketplaceCategory = ApiRecord & {
+  id: string;
+  name: string;
+  slug: string;
+};
+
+export type MarketplaceInstallation = ApiRecord & {
+  id: string;
+  installation_key: string;
+  package_name: string;
+  package_key: string;
+  version_number: string;
+  state: string;
+  config?: ApiRecord;
+  installed_at?: string | null;
+  error?: string | null;
+  steps?: Array<ApiRecord & { step_name: string; status: string; detail?: unknown }>;
+};
+
+export type AgentTemplate = ApiRecord & {
+  id: string;
+  template_key: string;
+  name: string;
+  description?: string | null;
+  category: string;
+  model?: string | null;
+  skills?: string[];
+  capabilities?: string[];
+};
+
+export type AgentInstance = ApiRecord & {
+  id: string;
+  agent_key: string;
+  name: string;
+  description?: string | null;
+  template_name?: string | null;
+  model?: string | null;
+  status: string;
+  skills?: string[];
+  capabilities?: string[];
+  config?: ApiRecord;
+  executions?: Array<ApiRecord & { goal?: string; status?: string; created_at: string }>;
+};
+
+export type FrontendMcpRequestResult = {
+  requiresApproval: boolean;
+  approvalId?: string;
+  message?: string;
+  result?: unknown;
+};
+
+export type FrontendMcpApproval = ApiRecord & {
+  id: string;
+  request_type: string;
+  created_at: string;
+};
+
+export type FrontendComponent = ApiRecord & {
+  id: string;
+  component_key: string;
+  name: string;
+  category: string;
+  description?: string | null;
+  version: string;
+  provider_name?: string;
+  accessibility_status: string;
+};
+
+export type FrontendInstallation = ApiRecord & {
+  id: string;
+  application_id: string;
+  application_name: string;
+  component_name?: string | null;
+  template_name?: string | null;
+  state: string;
+  installed_at: string;
+};
+
 export const platformApi = {
   health: () => apiFetch<{ status: string; service?: string; secrets?: unknown }>('/health', { skipAuth: true }),
   navigation: () => apiFetch<Array<{ id: string; label: string; href: string; permission?: string }>>('/api/navigation'),
@@ -7,14 +107,14 @@ export const platformApi = {
   tenants: () => apiFetch<Array<Record<string, unknown>>>('/api/tenants'),
   apps: () => apiFetch<Array<Record<string, unknown>>>('/api/apps'),
   createApp: (body: Record<string, unknown>) =>
-    apiFetch('/api/apps', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/apps', { method: 'POST', body: JSON.stringify(body) }),
   clients: () => apiFetch<Array<Record<string, unknown>>>('/api/clients'),
   client360: (id: string) => apiFetch<Record<string, unknown>>(`/api/clients/${id}/360`),
   products: () => apiFetch<Array<Record<string, unknown>>>('/api/products'),
   createOrder: (body: Record<string, unknown>) =>
-    apiFetch('/api/orders', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/orders', { method: 'POST', body: JSON.stringify(body) }),
   paymentWebhook: (body: Record<string, unknown>) =>
-    apiFetch('/api/payments/webhook', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/payments/webhook', { method: 'POST', body: JSON.stringify(body) }),
   capabilities: () => apiFetch<Array<Record<string, unknown>>>('/api/capabilities'),
   providers: () => apiFetch<Array<Record<string, unknown>>>('/api/providers'),
   subsystems: () => apiFetch<Array<Record<string, unknown>>>('/api/subsystems'),
@@ -24,24 +124,24 @@ export const platformApi = {
   databases: () => apiFetch<Array<Record<string, unknown>>>('/api/databases'),
   databaseHealth: () => apiFetch<Record<string, unknown>>('/api/databases/providers/health'),
   provisionDatabase: (body: Record<string, unknown>) =>
-    apiFetch('/api/databases', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/databases', { method: 'POST', body: JSON.stringify(body) }),
   workflows: () => apiFetch<Array<Record<string, unknown>>>('/api/workflows'),
   securityRules: () => apiFetch<Array<Record<string, unknown>>>('/api/security/rules'),
   createSecurityRule: (body: Record<string, unknown>) =>
-    apiFetch('/api/security/rules', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/security/rules', { method: 'POST', body: JSON.stringify(body) }),
   affiliates: () => apiFetch<Array<Record<string, unknown>>>('/api/affiliates'),
   audit: () => apiFetch<Array<Record<string, unknown>>>('/api/audit'),
   search: (q: string) => apiFetch<Record<string, unknown[]>>(`/api/search?q=${encodeURIComponent(q)}`),
   resources: () => apiFetch<Array<Record<string, unknown>>>('/api/resources'),
   lifecycle: (id: string, action: string) =>
-    apiFetch(`/api/resources/${id}/lifecycle`, { method: 'POST', body: JSON.stringify({ action }) }),
+    apiFetch<Record<string, unknown>>(`/api/resources/${id}/lifecycle`, { method: 'POST', body: JSON.stringify({ action }) }),
   provision: (body: Record<string, unknown>) =>
-    apiFetch('/api/provision', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/provision', { method: 'POST', body: JSON.stringify(body) }),
   saga: (id: string) => apiFetch<Record<string, unknown>>(`/api/sagas/${id}`),
   phoneChange: (body: Record<string, unknown>) =>
-    apiFetch('/api/ai/website/phone-change', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<{ changesets?: Array<{ id: string }> }>('/api/ai/website/phone-change', { method: 'POST', body: JSON.stringify(body) }),
   approveChangeset: (id: string) =>
-    apiFetch(`/api/changesets/${id}/approve`, { method: 'POST', body: '{}' }),
+    apiFetch<Record<string, unknown>>(`/api/changesets/${id}/approve`, { method: 'POST', body: '{}' }),
   aiChat: (messages: Array<{ role: string; content: string }>) =>
     apiFetch<{ content: string; model?: string }>('/api/ai/chat', {
       method: 'POST',
@@ -69,49 +169,56 @@ export const platformApi = {
   },
   trace: (correlationId: string) => apiFetch<Record<string, unknown>>(`/api/traces/${encodeURIComponent(correlationId)}`),
   createWorkflow: (body: Record<string, unknown>) =>
-    apiFetch('/api/workflows', { method: 'POST', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>('/api/workflows', { method: 'POST', body: JSON.stringify(body) }),
   updateWorkflow: (id: string, body: Record<string, unknown>) =>
-    apiFetch(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    apiFetch<Record<string, unknown>>(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   executeWorkflow: (id: string, body: Record<string, unknown> = {}) =>
-    apiFetch(`/api/workflows/${id}/execute`, { method: 'POST', body: JSON.stringify(body) }),
-  // Marketplace
+    apiFetch<Record<string, unknown>>(`/api/workflows/${id}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   marketplace: {
-    discover: () => apiFetch('/api/marketplace/discover'),
-    packages: () => apiFetch('/api/marketplace/packages'),
-    package: (id: string) => apiFetch(`/api/marketplace/packages/${id}`),
+    discover: () => apiFetch<MarketplacePackage[]>('/api/marketplace/discover'),
+    packages: () => apiFetch<MarketplacePackage[]>('/api/marketplace/packages'),
+    package: (id: string) => apiFetch<MarketplacePackage>(`/api/marketplace/packages/${id}`),
     install: (body: Record<string, unknown>) =>
-      apiFetch('/api/marketplace/install', { method: 'POST', body: JSON.stringify(body) }),
-    installations: () => apiFetch('/api/marketplace/installations'),
-    installation: (id: string) => apiFetch(`/api/marketplace/installations/${id}`),
+      apiFetch<MarketplaceInstallation>('/api/marketplace/install', { method: 'POST', body: JSON.stringify(body) }),
+    installations: () => apiFetch<MarketplaceInstallation[]>('/api/marketplace/installations'),
+    installation: (id: string) => apiFetch<MarketplaceInstallation>(`/api/marketplace/installations/${id}`),
     configureInstallation: (id: string, body: Record<string, unknown>) =>
-      apiFetch(`/api/marketplace/installations/${id}/configure`, { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<MarketplaceInstallation>(`/api/marketplace/installations/${id}/configure`, {
+        method: 'POST',
+        body: JSON.stringify({ config: body })
+      }),
     uninstall: (id: string) =>
-      apiFetch(`/api/marketplace/installations/${id}/uninstall`, { method: 'POST' }),
-    categories: () => apiFetch('/api/marketplace/categories')
+      apiFetch<{ success: boolean }>(`/api/marketplace/installations/${id}/uninstall`, { method: 'POST' }),
+    categories: () => apiFetch<MarketplaceCategory[]>('/api/marketplace/categories')
   },
-  // Agents
   agents: {
-    templates: () => apiFetch('/api/agents/templates'),
-    template: (key: string) => apiFetch(`/api/agents/templates/${key}`),
+    templates: () => apiFetch<AgentTemplate[]>('/api/agents/templates'),
+    template: (key: string) => apiFetch<AgentTemplate>(`/api/agents/templates/${key}`),
     instantiate: (body: Record<string, unknown>) =>
-      apiFetch('/api/agents/instantiate', { method: 'POST', body: JSON.stringify(body) }),
-    instances: () => apiFetch('/api/agents/instances'),
-    instance: (id: string) => apiFetch(`/api/agents/instances/${id}`),
+      apiFetch<AgentInstance>('/api/agents/instantiate', { method: 'POST', body: JSON.stringify(body) }),
+    instances: () => apiFetch<AgentInstance[]>('/api/agents/instances'),
+    instance: (id: string) => apiFetch<AgentInstance>(`/api/agents/instances/${id}`),
     configureInstance: (id: string, body: Record<string, unknown>) =>
-      apiFetch(`/api/agents/instances/${id}/configure`, { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<AgentInstance>(`/api/agents/instances/${id}/configure`, { method: 'POST', body: JSON.stringify(body) }),
+    executeInstance: (id: string, body: Record<string, unknown>) =>
+      apiFetch<ApiRecord>(`/api/agents/instances/${id}/execute`, { method: 'POST', body: JSON.stringify(body) }),
     deleteInstance: (id: string) =>
-      apiFetch(`/api/agents/instances/${id}`, { method: 'DELETE' })
+      apiFetch<void>(`/api/agents/instances/${id}`, { method: 'DELETE' })
   },
-  // Frontend MCP
   frontendMcp: {
-    providers: () => apiFetch('/api/frontend-mcp/providers'),
-    providerHealth: (id: string) => apiFetch(`/api/frontend-mcp/providers/${id}/health`),
+    providers: () => apiFetch<ApiRecord[]>('/api/frontend-mcp/providers'),
+    providerHealth: (id: string) => apiFetch<ApiRecord>(`/api/frontend-mcp/providers/${id}/health`),
     request: (body: Record<string, unknown>) =>
-      apiFetch('/api/frontend-mcp/request', { method: 'POST', body: JSON.stringify(body) }),
-    approvals: () => apiFetch('/api/frontend-mcp/approvals'),
+      apiFetch<FrontendMcpRequestResult>('/api/frontend-mcp/request', { method: 'POST', body: JSON.stringify(body) }),
+    approvals: () => apiFetch<FrontendMcpApproval[]>('/api/frontend-mcp/approvals'),
     approve: (id: string) =>
-      apiFetch(`/api/frontend-mcp/approvals/${id}/approve`, { method: 'POST' }),
+      apiFetch<{ approved: boolean; result?: unknown }>(`/api/frontend-mcp/approvals/${id}/approve`, { method: 'POST' }),
     reject: (id: string) =>
-      apiFetch(`/api/frontend-mcp/approvals/${id}/reject`, { method: 'POST' })
+      apiFetch<{ success: boolean }>(`/api/frontend-mcp/approvals/${id}/reject`, { method: 'POST' }),
+    components: (q = '') => apiFetch<FrontendComponent[]>(`/api/frontend-mcp/components${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    templates: () => apiFetch<ApiRecord[]>('/api/frontend-mcp/templates'),
+    installations: () => apiFetch<FrontendInstallation[]>('/api/frontend-mcp/installations'),
+    installComponent: (id: string, body: Record<string, unknown>) =>
+      apiFetch<FrontendInstallation>(`/api/frontend-mcp/components/${id}/install`, { method: 'POST', body: JSON.stringify(body) })
   }
 };

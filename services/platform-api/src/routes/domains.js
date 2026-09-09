@@ -689,7 +689,13 @@ export function registerDomainRoutes(app, { pool }) {
   app.get('/api/builders/puck/schema', async (req) => {
     const ctx = req.bridge;
     authorize(ctx, 'cms.read');
-    return ok(await builders.puckSchema(), ctx);
+    const t = requireTenant(ctx);
+    const applicationId = req.query.applicationId || null;
+    if (applicationId) {
+      const appRow = (await pool.query('SELECT id FROM apps WHERE id=$1 AND tenant_id=$2', [applicationId, t])).rows[0];
+      if (!appRow) throw fail('NOT_FOUND', 'app not found', 404);
+    }
+    return ok(await builders.puckSchema({ tenantId: t, applicationId }), ctx);
   });
   app.get('/api/builders/apps/:appId', async (req) => {
     const ctx = req.bridge;

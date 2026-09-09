@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { connect, StringCodec } from 'nats';
 import crypto from 'node:crypto';
+import { databaseAllocationForInput } from './database-allocation.js';
 
 const { Pool } = pg;
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -125,7 +126,7 @@ async function runSaga(client, { installationId, tenantId, packageId, versionId,
         [versionId]
       )).rows[0];
       
-      const compatibility = version?.compatibility || {};
+      void (version?.compatibility || {});
       // For now, we accept all compatibility. Future: check min/max versions, required capabilities, etc.
     }
 
@@ -138,19 +139,22 @@ async function runSaga(client, { installationId, tenantId, packageId, versionId,
       )).rows[0]?.manifest || {};
       
       if (manifest.requiresDatabase && manifest.databaseEngine) {
-        // This would call the database provider, similar to provision-worker
-        // For now, we'll create a placeholder record
-        const engine = manifest.databaseEngine === 'mysql' ? 'mariadb' : manifest.databaseEngine;
+        const databaseName = `db_${tenantId.toString().slice(0, 8)}_${Date.now().toString(36)}`;
+        const allocation = databaseAllocationForInput(
+          { databaseEngine: manifest.databaseEngine, databaseName },
+          tenantId
+        );
         await client.query(
           `INSERT INTO database_instances(tenant_id,engine,host,port,database_name,status,secret_ref)
-           VALUES($1,$2,$3,$4,$5,'READY',$6)`,
+           VALUES($1,$2,$3,$4,$5,$6,$7)`,
           [
             tenantId,
-            engine,
-            engine === 'postgresql' ? 'postgres' : engine === 'mongodb' ? 'mongodb' : engine === 'sqlserver' ? 'mssql' : 'wordpress-db',
-            engine === 'postgresql' ? 5432 : engine === 'mongodb' ? 27017 : engine === 'sqlserver' ? 1433 : 3306,
-            `db_${tenantId.toString().slice(0, 8)}_${Date.now().toString(36)}`,
-            `db:${tenantId}:marketplace`
+            allocation.engine,
+            allocation.host,
+            allocation.port,
+            allocation.databaseName,
+            allocation.status,
+            allocation.secretRef
           ]
         );
       }
@@ -348,7 +352,10 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+const isMain = process.argv[1] && (process.argv[1].endsWith('worker.js') || process.argv[1].endsWith('worker'));
+if (isMain) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

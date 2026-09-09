@@ -17,6 +17,7 @@ import { registerDomainRoutes } from './routes/domains.js';
 import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerFrontendMcpRoutes } from './routes/frontend-mcp.js';
+import { registerEcosystemResourceRoutes } from './routes/ecosystem-resources.js';
 import { executeCapability } from './lib/capabilities.js';
 
 assertSecretsProductionPolicy();
@@ -142,6 +143,7 @@ registerDomainRoutes(app, { pool });
 registerMarketplaceRoutes(app, { pool });
 registerAgentRoutes(app, { pool });
 registerFrontendMcpRoutes(app, { pool });
+registerEcosystemResourceRoutes(app, { pool });
 
 app.get('/api/resources', async (req, reply) => {
   return sendCompat(req, reply, await executeCapability(pool, req.bridge, {

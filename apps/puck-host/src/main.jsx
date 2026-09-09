@@ -34,7 +34,7 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        const schema = await api('/api/builders/puck/schema', { tenantId, token });
+        const schema = await api(`/api/builders/puck/schema?applicationId=${encodeURIComponent(applicationId)}`, { tenantId, token });
         const components = {};
         for (const c of schema.components || []) {
           components[c.type] = {

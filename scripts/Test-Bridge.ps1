@@ -3,7 +3,9 @@ param(
   [ValidateSet('Lab', 'Production')]
   [string]$Mode = 'Lab',
   [switch]$Full,
-  [string]$BaseUrl = ''
+  [string]$BaseUrl = '',
+  [string]$ControlUrl = '',
+  [string]$AccessToken = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -27,10 +29,25 @@ function Invoke-Json([string]$Method, [string]$Url, [hashtable]$Headers = @{}, $
   return Invoke-RestMethod @params
 }
 
+function Invoke-Status([string]$Method, [string]$Url, [hashtable]$Headers = @{}) {
+  try {
+    $response = Invoke-WebRequest -Method $Method -Uri $Url -Headers $Headers -UseBasicParsing
+    return [int]$response.StatusCode
+  } catch {
+    if ($null -ne $_.Exception.Response) {
+      return [int]$_.Exception.Response.StatusCode
+    }
+    throw
+  }
+}
+
 $failed = 0
 try {
   if (-not $BaseUrl) {
     $BaseUrl = if ($Mode -eq 'Production') { "https://api.$($env:BRIDGE_DOMAIN)" } else { 'http://localhost:4000' }
+  }
+  if (-not $ControlUrl) {
+    $ControlUrl = if ($Mode -eq 'Production') { "https://control.$($env:BRIDGE_DOMAIN)" } else { 'http://localhost:5173' }
   }
 
   Write-Log "Unit tests platform-api"
@@ -89,7 +106,38 @@ try {
       'x-bridge-envelope' = '1'
     }
     if ($Mode -eq 'Production') {
-      Write-Log 'Production mode expects Bearer JWT — skipping header-auth integration path (UNVERIFIED without token)' 'WARN'
+      $forgedStatus = Invoke-Status GET "$BaseUrl/api/tenants" $headers
+      Assert-True ($forgedStatus -eq 401 -or $forgedStatus -eq 403) 'prod.forged-headers.rejected'
+
+      $controlStatus = Invoke-Status GET $ControlUrl
+      Assert-True ($controlStatus -eq 200) 'control-center.http'
+
+      if (-not $AccessToken) {
+        Write-Log 'AccessToken unset — authenticated production provisioning is UNVERIFIED' 'WARN'
+      } else {
+        $jwtHeaders = @{ Authorization = "Bearer $AccessToken"; 'x-bridge-envelope' = '1' }
+        $tenants = Invoke-Json GET "$BaseUrl/api/tenants" $jwtHeaders
+        $tenantId = $tenants.data[0].id
+        Assert-True ([bool]$tenantId) 'prod.jwt.authorized'
+        $jwtHeaders['x-tenant-id'] = $tenantId
+
+        $prov = Invoke-Json POST "$BaseUrl/api/provision" $jwtHeaders @{
+          name = "Prod-Smoke-$([guid]::NewGuid().ToString().Substring(0,8))"
+          appType = 'react'
+          launchUrl = $ControlUrl
+          databaseEngine = 'none'
+        }
+        $sagaId = $prov.data.id
+        $deadline = (Get-Date).AddSeconds(45)
+        $completed = $false
+        while ((Get-Date) -lt $deadline) {
+          Start-Sleep -Seconds 2
+          $saga = Invoke-Json GET "$BaseUrl/api/sagas/$sagaId" $jwtHeaders
+          if ($saga.data.state -eq 'completed') { $completed = $true; break }
+          if ($saga.data.state -eq 'failed') { throw "production saga failed: $($saga.data.error)" }
+        }
+        Assert-True $completed 'prod.provision.outbox-worker.completed'
+      }
     } else {
       $tenants = Invoke-Json GET "$BaseUrl/api/tenants" $headers
       $tenantId = $tenants.data[0].id

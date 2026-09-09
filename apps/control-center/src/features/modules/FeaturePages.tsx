@@ -33,7 +33,7 @@ export function AiPage() {
         ]);
         return;
       }
-      if (/frontend|mcp|build/ui/i.test(q)) {
+      if (/frontend|mcp|build\/ui/i.test(q)) {
         // Frontend MCP request
         const result = await platformApi.frontendMcp.request({
           providerId: 'threeui-community',

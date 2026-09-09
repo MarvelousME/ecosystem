@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { connect, StringCodec } from 'nats';
 import crypto from 'node:crypto';
+import { databaseAllocationForInput } from './database-allocation.js';
 
 const { Pool } = pg;
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -94,18 +95,19 @@ async function runSaga(client, { sagaId, tenantId, input, correlationId, traceId
     await client.query(`UPDATE sagas SET current_step=$2, updated_at=now() WHERE id=$1`, [sagaId, stepName]);
 
     if (stepName === 'allocate_database' && input?.databaseEngine && input.databaseEngine !== 'none') {
-      const engine = input.databaseEngine === 'mysql' ? 'mariadb' : input.databaseEngine;
+      const allocation = databaseAllocationForInput(input, tenantId);
       await client.query(
         `INSERT INTO database_instances(tenant_id,application_id,engine,host,port,database_name,status,secret_ref)
-         VALUES($1,$2,$3,$4,$5,$6,'READY',$7)`,
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           tenantId,
           input.applicationId || null,
-          engine,
-          engine === 'postgresql' ? 'postgres' : engine === 'mongodb' ? 'mongodb' : engine === 'sqlserver' ? 'mssql' : 'wordpress-db',
-          engine === 'postgresql' ? 5432 : engine === 'mongodb' ? 27017 : engine === 'sqlserver' ? 1433 : 3306,
-          input.databaseName || `t_${String(tenantId).slice(0, 8)}`,
-          `db:${tenantId}:${input.databaseName || 'app'}`
+          allocation.engine,
+          allocation.host,
+          allocation.port,
+          allocation.databaseName,
+          allocation.status,
+          allocation.secretRef
         ]
       );
     }
@@ -264,7 +266,13 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+const isMain =
+  process.argv[1] &&
+  (process.argv[1].endsWith('worker.js') || process.argv[1].endsWith('worker'));
+
+if (isMain) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

@@ -1,0 +1,8 @@
+{
+  "name": "bridge-agent-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/worker.js", "check": "node --check src/worker.js" },
+  "dependencies": { "nats": "^2.29.0", "pg": "^8.16.0" }
+}

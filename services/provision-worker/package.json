@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/worker.js",
-    "check": "node --check src/worker.js",
+    "check": "node --check src/worker.js && node --check src/database-allocation.js",
     "test:unit": "node --test test/*.test.js"
   },
   "dependencies": {

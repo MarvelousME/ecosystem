@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/lib/kernel.js && node --check src/lib/rbac.js && node --check src/lib/capabilities.js && node --check src/lib/auth.js && node --check src/lib/redis.js && node --check src/lib/clickhouse.js && node --check src/lib/outbox.js && node --check src/lib/secrets.js && node --check src/lib/zip-import.js && node --check src/lib/builders.js && node --check src/lib/migrate.js && node --check src/providers/website.js && node --check src/providers/database.js && node --check src/routes/domains.js",
+    "check": "node --check src/server.js && node --check src/lib/kernel.js && node --check src/lib/rbac.js && node --check src/lib/capabilities.js && node --check src/lib/auth.js && node --check src/lib/redis.js && node --check src/lib/clickhouse.js && node --check src/lib/outbox.js && node --check src/lib/secrets.js && node --check src/lib/zip-import.js && node --check src/lib/builders.js && node --check src/lib/migrate.js && node --check src/lib/marketplace-policy.js && node --check src/providers/website.js && node --check src/providers/database.js && node --check src/routes/domains.js && node --check src/routes/ecosystem-resources.js",
     "test:unit": "node --test test/*.test.js"
   },
   "dependencies": {

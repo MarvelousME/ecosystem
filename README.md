@@ -75,6 +75,8 @@ This repository is designed to fail closed when optional external providers are 
 
 ## Production hardening
 
-Before production: enable `BRIDGE_REQUIRE_JWT=1` and `BRIDGE_TRUST_HEADERS=0`, add TLS/WAF, external secrets manager (beyond lab AES-GCM), object storage for ZIP promote, JetStream durables, CORS allowlist, backup/restore drills, and a real hosting provisioner.
+Start production configuration from `.env.production.example`; it requires JWTs, disables trusted identity headers, enables OIDC in the compiled Control Center, and selects AWS KMS. Deploy with `docker compose -f docker-compose.prod.yml --env-file .env up -d`.
+
+Run `./scripts/Test-Bridge.ps1 -Mode Production` before deployment, then add `-Full -AccessToken <JWT>` against the live stack to verify JWT enforcement, API health, the Control Center, and provisioning/outbox processing.
 
 Lab gap closures already include: jose JWKS, outbox relay + consumer inbox, Redis rate-limit/cache, ClickHouse writers (when `CLICKHOUSE_URL` set), ZIP quarantine, Puck/Gutenberg builder APIs, CI workflow.

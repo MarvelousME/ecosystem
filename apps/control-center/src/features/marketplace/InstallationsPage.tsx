@@ -1,23 +1,24 @@
 import { For, Show, createResource, createSignal, onMount } from 'solid-js';
-import { platformApi } from '~/api/platform';
+import { platformApi, type MarketplaceInstallation } from '~/api/platform';
 import { workspaceStore } from '~/stores/workspace';
 import { pageEnter } from '~/motion/registry';
 
 export function InstallationsPage() {
   let root!: HTMLElement;
   const [installations, { refetch }] = createResource(() => workspaceStore.tenantId, () => platformApi.marketplace.installations());
-  const [selectedInstallation, setSelectedInstallation] = createSignal<any>(null);
-  const [config, setConfig] = createSignal<any>({});
+  const [selectedInstallation, setSelectedInstallation] = createSignal<MarketplaceInstallation | null>(null);
+  const [config, setConfig] = createSignal<Record<string, unknown>>({});
   const [saving, setSaving] = createSignal(false);
   const [message, setMessage] = createSignal('');
   onMount(() => pageEnter(root));
 
   async function saveConfig() {
-    if (!selectedInstallation()) return;
+    const installation = selectedInstallation();
+    if (!installation) return;
     setSaving(true);
     setMessage('');
     try {
-      await platformApi.marketplace.configureInstallation(selectedInstallation().id, config());
+      await platformApi.marketplace.configureInstallation(installation.id, config());
       setMessage('Configuration saved');
       refetch();
     } catch (e: any) {
@@ -27,12 +28,11 @@ export function InstallationsPage() {
     }
   }
 
-  async function uninstall() {
-    if (!selectedInstallation()) return;
+  async function uninstall(installationId: string) {
     if (!confirm('Are you sure you want to uninstall this application?')) return;
     
     try {
-      await platformApi.marketplace.uninstall(selectedInstallation().id);
+      await platformApi.marketplace.uninstall(installationId);
       setMessage('Uninstallation requested');
       setSelectedInstallation(null);
       refetch();
@@ -45,6 +45,7 @@ export function InstallationsPage() {
     try {
       const detail = await platformApi.marketplace.installation(installationId);
       setSelectedInstallation(detail);
+      setConfig(detail.config || {});
     } catch (e: any) {
       setMessage(`Failed to load details: ${e.message}`);
     }
@@ -66,8 +67,8 @@ export function InstallationsPage() {
       </Show>
 
       <div class="metric-grid">
-        <For each={installations()}>
-          {(inst: any) => (
+        <For each={installations() || []}>
+          {(inst) => (
             <article class="panel panel-pad">
               <span class={`status-pill ${inst.state === 'ready' ? 'status-ok' : 'status-warn'}`}>
                 {inst.state.toUpperCase()}
@@ -98,7 +99,10 @@ export function InstallationsPage() {
                   <button
                     class="btn"
                     type="button"
-                    onClick={() => setSelectedInstallation(inst)}
+                    onClick={() => {
+                      setSelectedInstallation(inst);
+                      setConfig(inst.config || {});
+                    }}
                   >
                     Configure
                   </button>
@@ -106,7 +110,7 @@ export function InstallationsPage() {
                 <button
                   class="btn"
                   type="button"
-                  onClick={uninstall}
+                  onClick={() => uninstall(inst.id)}
                 >
                   Uninstall
                 </button>
@@ -118,12 +122,12 @@ export function InstallationsPage() {
 
       <Show when={selectedInstallation()}>
         <div class="panel panel-pad" style={{ 'margin-top': '1rem' }}>
-          <h3>{selectedInstallation().package_name} - Configuration</h3>
-          <p>Installation Key: {selectedInstallation().installation_key}</p>
+          <h3>{selectedInstallation()!.package_name} - Configuration</h3>
+          <p>Installation Key: {selectedInstallation()!.installation_key}</p>
           
           <h4>Installation Steps</h4>
           <ul>
-            <For each={selectedInstallation().steps || []}>
+            <For each={selectedInstallation()!.steps || []}>
               {(step: any) => (
                 <li style={{ color: step.status === 'SUCCEEDED' ? 'var(--bridge-success)' : step.status === 'FAILED' ? 'var(--bridge-danger)' : 'inherit' }}>
                   {step.step_name}: {step.status}
@@ -137,7 +141,7 @@ export function InstallationsPage() {
 
           <h4>Configuration</h4>
           <pre style={{ 'font-family': 'var(--bridge-mono)', 'font-size': '0.8rem', 'background': 'var(--bridge-bg-secondary)', padding: '1rem', 'border-radius': '4px' }}>
-            {JSON.stringify(selectedInstallation().config, null, 2)}
+            {JSON.stringify(selectedInstallation()!.config, null, 2)}
           </pre>
           
           <div style={{ display: 'flex', gap: '0.5rem', 'margin-top': '1rem' }}>

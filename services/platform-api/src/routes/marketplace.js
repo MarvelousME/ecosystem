@@ -2,6 +2,7 @@ import { ok, fail, audit, requireTenant } from '../lib/kernel.js';
 import { authorize } from '../lib/rbac.js';
 import { executeCapability, bumpUsage } from '../lib/capabilities.js';
 import { enqueueOutbox } from '../lib/outbox.js';
+import { assertInstallableVersion, isVisibleToTenant } from '../lib/marketplace-policy.js';
 
 export function registerMarketplaceRoutes(app, { pool }) {
   // --- Marketplace Package Management (Platform Admin) ---
@@ -84,26 +85,15 @@ export function registerMarketplaceRoutes(app, { pool }) {
     const t = requireTenant(ctx);
     authorize(ctx, 'marketplace.read');
     
-    // Get tenant's entitlements
+    const tenant = (await pool.query('SELECT id,plan FROM tenants WHERE id=$1', [t])).rows[0];
     const entitlements = (await pool.query('SELECT limits FROM entitlements WHERE tenant_id=$1', [t])).rows[0]?.limits || {};
-    
-    // Filter packages by entitlement and published status
-    const rows = (await pool.query(
-      `SELECT DISTINCT p.*, 
-              (SELECT json_agg(json_build_object('id', v.id, 'version', v.version, 'requires_entitlement', v.requires_entitlement))
-               FROM marketplace_versions v WHERE v.package_id = p.id AND v.status = 'published') as versions
-       FROM marketplace_packages p
-       WHERE p.status = 'published'
-       AND (p.requires_entitlement IS NULL OR p.requires_entitlement = ANY($1))
-       ORDER BY p.featured DESC, p.created_at DESC`,
-      [Object.keys(entitlements).length > 0 ? Object.keys(entitlements) : [null]]
-    )).rows;
-    
-    // Filter versions by tenant entitlements
-    const filtered = rows.map(pkg => ({
+    const rows = (await pool.query("SELECT * FROM marketplace_packages WHERE status='published' ORDER BY featured DESC, created_at DESC")).rows;
+    const rules = (await pool.query('SELECT * FROM marketplace_visibility_rules')).rows;
+    const versions = (await pool.query("SELECT id,package_id,version,requires_entitlement,compatibility FROM marketplace_versions WHERE status='published'")).rows;
+    const filtered = rows.filter((pkg) => isVisibleToTenant(rules.filter((rule) => rule.package_id === pkg.id), tenant)).map((pkg) => ({
       ...pkg,
-      versions: pkg.versions?.filter(v => !v.requires_entitlement || entitlements[v.requires_entitlement] > 0) || []
-    }));
+      versions: versions.filter((version) => version.package_id === pkg.id && (!version.requires_entitlement || Number(entitlements[version.requires_entitlement] || 0) > 0))
+    })).filter((pkg) => pkg.versions.length);
     
     return ok(filtered, ctx);
   });
@@ -120,6 +110,7 @@ export function registerMarketplaceRoutes(app, { pool }) {
     const ctx = req.bridge;
     const t = requireTenant(ctx);
     const { packageId, versionId, config } = req.body || {};
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() || null;
     if (!packageId || !versionId) throw fail('VALIDATION', 'packageId and versionId required', 400);
     
     const result = await executeCapability(pool, ctx, {
@@ -128,20 +119,31 @@ export function registerMarketplaceRoutes(app, { pool }) {
       entitlementKey: 'apps',
       handler: async ({ tenantId }) => {
         // Verify package and version exist
-        const pkg = (await pool.query('SELECT * FROM marketplace_packages WHERE id=$1', [packageId])).rows[0];
+        const pkg = (await pool.query("SELECT * FROM marketplace_packages WHERE id=$1 AND status='published'", [packageId])).rows[0];
         if (!pkg) throw fail('NOT_FOUND', 'package not found', 404);
         
         const version = (await pool.query('SELECT * FROM marketplace_versions WHERE id=$1 AND package_id=$2', [versionId, packageId])).rows[0];
         if (!version) throw fail('NOT_FOUND', 'version not found', 404);
         
-        if (version.status !== 'published') throw fail('FORBIDDEN', 'version not published', 403);
+        assertInstallableVersion(version, { production: process.env.NODE_ENV === 'production' });
+        const tenant = (await pool.query('SELECT id,plan FROM tenants WHERE id=$1', [tenantId])).rows[0];
+        const rules = (await pool.query('SELECT * FROM marketplace_visibility_rules WHERE package_id=$1', [packageId])).rows;
+        if (!isVisibleToTenant(rules, tenant)) throw fail('FORBIDDEN', 'package is not visible to this tenant', 403);
+        if (version.requires_entitlement) {
+          const limits = (await pool.query('SELECT limits FROM entitlements WHERE tenant_id=$1', [tenantId])).rows[0]?.limits || {};
+          if (Number(limits[version.requires_entitlement] || 0) <= 0) throw fail('ENTITLEMENT_EXCEEDED', 'package entitlement unavailable', 402);
+        }
+        const existing = (await pool.query(
+          'SELECT * FROM marketplace_installations WHERE tenant_id=$1 AND package_id=$2 AND state <> $3', [tenantId, packageId, 'uninstalled']
+        )).rows[0];
+        if (existing) return { ...existing, idempotent: true };
         
         // Create installation record
-        const installationKey = `${tenantId}-${pkg.package_key}-${Date.now()}`;
+        const installationKey = `${tenantId}-${pkg.package_key}-${idempotencyKey || Date.now()}`;
         const r = await pool.query(
-          `INSERT INTO marketplace_installations(tenant_id,package_id,version_id,installation_key,state,config)
-           VALUES($1,$2,$3,$4,'pending',$5) RETURNING *`,
-          [tenantId, packageId, versionId, installationKey, JSON.stringify(config || {})]
+          `INSERT INTO marketplace_installations(tenant_id,package_id,version_id,installation_key,state,config,idempotency_key)
+           VALUES($1,$2,$3,$4,'pending',$5,$6) RETURNING *`,
+          [tenantId, packageId, versionId, installationKey, JSON.stringify(config || {}), idempotencyKey]
         );
         
         // Create saga and enqueue install request
@@ -214,7 +216,7 @@ export function registerMarketplaceRoutes(app, { pool }) {
   app.post('/api/marketplace/installations/:id/configure', async (req, reply) => {
     const ctx = req.bridge;
     const t = requireTenant(ctx);
-    authorize(ctx, 'marketplace.install');
+    authorize(ctx, 'marketplace.app.configure');
     const { config } = req.body || {};
     const r = await pool.query(
       `UPDATE marketplace_installations SET config=$2, updated_at=now() WHERE id=$1 AND tenant_id=$3 RETURNING *`,
@@ -239,13 +241,11 @@ export function registerMarketplaceRoutes(app, { pool }) {
         )).rows[0];
         if (!installation) throw fail('NOT_FOUND', 'installation not found', 404);
         
-        // Delete app record if linked
+        // Preserve tenant data and audit history; disable the runtime instead of deleting it.
         if (installation.app_id) {
-          await pool.query('DELETE FROM apps WHERE id=$1', [installation.app_id]);
+          await pool.query("UPDATE apps SET lifecycle_status='DISABLED', status='disabled', updated_at=now() WHERE id=$1 AND tenant_id=$2", [installation.app_id, t]);
         }
-        
-        // Delete installation
-        await pool.query('DELETE FROM marketplace_installations WHERE id=$1', [req.params.id]);
+        await pool.query("UPDATE marketplace_installations SET state='uninstalled', updated_at=now() WHERE id=$1 AND tenant_id=$2", [req.params.id, t]);
         
         await bumpUsage(pool, t, 'apps', -1);
         await audit(pool, ctx, 'marketplace.installation.uninstall', 'marketplace_installation', req.params.id);

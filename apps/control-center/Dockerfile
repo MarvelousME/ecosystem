@@ -2,7 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 ARG VITE_BRIDGE_API_URL=http://localhost:4000
 ARG VITE_API_BASE_URL=
-ARG VITE_OIDC_AUTHORITY=http://localhost:8081/realms/bridge
+ARG VITE_OIDC_AUTHORITY=http://localhost:8181/realms/bridge
 ARG VITE_OIDC_CLIENT_ID=bridge-control-center
 ARG VITE_OIDC_REDIRECT_URI=http://localhost:5173/auth/callback
 ARG VITE_OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:5173/

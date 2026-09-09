@@ -53,14 +53,14 @@ services:
       dockerfile: Dockerfile.migrate
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      MIGRATIONS_DIR: /migrations
+      MIGRATIONS_DIR: /migration-input
     volumes:
-      - ./infra/postgres/migrations:/migrations:ro
-      - ./infra/postgres/003-gap-closures.sql:/migrations/003-gap-closures.sql:ro
-      - ./infra/postgres/004-production-capability-convergence.sql:/migrations/004-production-capability-convergence.sql:ro
-      - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/migrations/005-marketplace-agents-frontend-mcp.sql:ro
-      - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/migrations/006-marketplace-agent-frontend-governance.sql:ro
-      - ./infra/postgres/007-demo-client-tenant-relationships.sql:/migrations/007-demo-client-tenant-relationships.sql:ro
+      - ./infra/postgres/migrations/004-production-hardening.sql:/migration-input/004-production-hardening.sql:ro
+      - ./infra/postgres/003-gap-closures.sql:/migration-input/003-gap-closures.sql:ro
+      - ./infra/postgres/004-production-capability-convergence.sql:/migration-input/004-production-capability-convergence.sql:ro
+      - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/migration-input/005-marketplace-agents-frontend-mcp.sql:ro
+      - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/migration-input/006-marketplace-agent-frontend-governance.sql:ro
+      - ./infra/postgres/007-demo-client-tenant-relationships.sql:/migration-input/007-demo-client-tenant-relationships.sql:ro
     depends_on:
       postgres:
         condition: service_healthy

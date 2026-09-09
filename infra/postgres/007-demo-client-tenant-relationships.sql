@@ -1,9 +1,21 @@
 -- 007 Repeatable local demo data. No secrets and no fabricated provider health.
+-- Fresh initdb runs this seed before the incremental hardening directory, so
+-- create the membership boundary it needs rather than depending on API startup.
+CREATE TABLE IF NOT EXISTS tenant_memberships(
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  actor_id text NOT NULL,
+  roles text[] NOT NULL DEFAULT ARRAY['tenant.viewer']::text[],
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(tenant_id, actor_id)
+);
+
 INSERT INTO clients(name,email,status,metadata)
-VALUES
+SELECT seed.name, seed.email, seed.status, seed.metadata
+FROM (VALUES
   ('Bridge Demo Client','demo@bridge.local','active','{"segment":"enterprise","seed":true}'::jsonb),
   ('Northstar Operations','ops@northstar.example','active','{"segment":"business","seed":true}'::jsonb)
-ON CONFLICT DO NOTHING;
+) AS seed(name,email,status,metadata)
+WHERE NOT EXISTS (SELECT 1 FROM clients c WHERE c.email=seed.email);
 
 INSERT INTO organizations(client_id,name)
 SELECT c.id, c.name || ' Organization' FROM clients c
@@ -11,10 +23,12 @@ WHERE c.email IN ('demo@bridge.local','ops@northstar.example')
 AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.client_id=c.id);
 
 INSERT INTO tenants(slug,name,plan,status,isolation_mode,client_id)
-SELECT 'bridge-demo','Bridge Demo Company','enterprise','active','SHARED',c.id FROM clients c WHERE c.email='demo@bridge.local'
+SELECT 'bridge-demo','Bridge Demo Company','enterprise','active','SHARED',
+  (SELECT c.id FROM clients c WHERE c.email='demo@bridge.local' ORDER BY c.created_at, c.id LIMIT 1)
 ON CONFLICT(slug) DO UPDATE SET client_id=EXCLUDED.client_id, plan=EXCLUDED.plan;
 INSERT INTO tenants(slug,name,plan,status,isolation_mode,client_id)
-SELECT 'northstar-ops','Northstar Operations Workspace','business','active','SHARED',c.id FROM clients c WHERE c.email='ops@northstar.example'
+SELECT 'northstar-ops','Northstar Operations Workspace','business','active','SHARED',
+  (SELECT c.id FROM clients c WHERE c.email='ops@northstar.example' ORDER BY c.created_at, c.id LIMIT 1)
 ON CONFLICT(slug) DO UPDATE SET client_id=EXCLUDED.client_id, plan=EXCLUDED.plan;
 
 INSERT INTO client_tenants(client_id,tenant_id)

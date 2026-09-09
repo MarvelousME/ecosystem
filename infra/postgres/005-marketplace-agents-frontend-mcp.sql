@@ -140,15 +140,15 @@ CREATE TABLE IF NOT EXISTS installation_saga_steps(
 );
 
 -- Indexes for tenant isolation and performance
-CREATE INDEX idx_marketplace_installations_tenant ON marketplace_installations(tenant_id);
-CREATE INDEX idx_marketplace_installations_state ON marketplace_installations(state);
-CREATE INDEX idx_agent_instances_tenant ON agent_instances(tenant_id);
-CREATE INDEX idx_frontend_mcp_approvals_tenant ON frontend_mcp_approvals(tenant_id);
-CREATE INDEX idx_frontend_mcp_approvals_status ON frontend_mcp_approvals(approval_status);
-CREATE INDEX idx_marketplace_versions_package ON marketplace_versions(package_id);
-CREATE INDEX idx_marketplace_versions_status ON marketplace_versions(status);
-CREATE INDEX idx_marketplace_packages_category ON marketplace_packages(category);
-CREATE INDEX idx_marketplace_packages_status ON marketplace_packages(status);
+CREATE INDEX IF NOT EXISTS idx_marketplace_installations_tenant ON marketplace_installations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_installations_state ON marketplace_installations(state);
+CREATE INDEX IF NOT EXISTS idx_agent_instances_tenant ON agent_instances(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_frontend_mcp_approvals_tenant ON frontend_mcp_approvals(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_frontend_mcp_approvals_status ON frontend_mcp_approvals(approval_status);
+CREATE INDEX IF NOT EXISTS idx_marketplace_versions_package ON marketplace_versions(package_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_versions_status ON marketplace_versions(status);
+CREATE INDEX IF NOT EXISTS idx_marketplace_packages_category ON marketplace_packages(category);
+CREATE INDEX IF NOT EXISTS idx_marketplace_packages_status ON marketplace_packages(status);
 
 -- Seed Categories
 INSERT INTO marketplace_categories(id, name, slug, description, sort_order) VALUES

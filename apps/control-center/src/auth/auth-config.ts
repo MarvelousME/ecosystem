@@ -12,7 +12,7 @@ export function isAuthRequired(env: EnvLike = import.meta.env): boolean {
 export function buildOidcSettings(env: EnvLike = import.meta.env) {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
   return {
-    authority: String(env.VITE_OIDC_AUTHORITY || 'http://localhost:8081/realms/bridge'),
+    authority: String(env.VITE_OIDC_AUTHORITY || 'http://localhost:8181/realms/bridge'),
     client_id: String(env.VITE_OIDC_CLIENT_ID || 'bridge-control-center'),
     redirect_uri: String(env.VITE_OIDC_REDIRECT_URI || `${origin}/auth/callback`),
     post_logout_redirect_uri: String(env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI || `${origin}/`),

@@ -4,7 +4,7 @@ import { buildOidcSettings, isAuthRequired, resolveApiBaseUrl } from '../auth/au
 describe('auth-config', () => {
   it('builds PKCE code flow settings', () => {
     const s = buildOidcSettings({
-      VITE_OIDC_AUTHORITY: 'http://localhost:8081/realms/bridge',
+      VITE_OIDC_AUTHORITY: 'http://localhost:8181/realms/bridge',
       VITE_OIDC_CLIENT_ID: 'bridge-control-center'
     });
     expect(s.response_type).toBe('code');

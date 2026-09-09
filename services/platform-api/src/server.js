@@ -14,6 +14,7 @@ import {
   resolveSecretsProviderName
 } from './lib/secrets.js';
 import { registerDomainRoutes } from './routes/domains.js';
+import { executeCapability } from './lib/capabilities.js';
 
 assertSecretsProductionPolicy();
 
@@ -116,94 +117,110 @@ function sendCompat(req, reply, payload, code = 200) {
 registerDomainRoutes(app, { pool });
 
 app.get('/api/resources', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'app.read');
-  const rows = (await pool.query('SELECT * FROM managed_resources WHERE tenant_id=$1 ORDER BY kind,name', [t])).rows;
-  return sendCompat(req, reply, rows.map((x) => ({ ...x, availableActions: Object.keys(transitions[x.state] || {}) })));
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'resource.read', permission: 'app.read',
+    handler: async ({ tenantId }) => {
+      const rows = (await pool.query('SELECT * FROM managed_resources WHERE tenant_id=$1 ORDER BY kind,name', [tenantId])).rows;
+      return rows.map((x) => ({ ...x, availableActions: Object.keys(transitions[x.state] || {}) }));
+    }
+  }));
 });
 app.post('/api/resources', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'app.manage');
   const { kind, key, name, version = '1.0.0' } = req.body || {};
-  const r = await pool.query(
-    'INSERT INTO managed_resources(tenant_id,kind,resource_key,name,version) VALUES($1,$2,$3,$4,$5) RETURNING *',
-    [t, kind, key, name, version]
-  );
-  await audit(pool, ctx, 'resource.create', 'managed_resource', r.rows[0].id);
-  return sendCompat(req, reply, r.rows[0], 201);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'resource.manage', permission: 'app.manage',
+    handler: async ({ tenantId }) => {
+      const r = await pool.query(
+        'INSERT INTO managed_resources(tenant_id,kind,resource_key,name,version) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [tenantId, kind, key, name, version]
+      );
+      await audit(pool, req.bridge, 'resource.create', 'managed_resource', r.rows[0].id);
+      return r.rows[0];
+    }
+  }), 201);
 });
 app.post('/api/resources/:id/lifecycle', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'app.manage');
-  const row = (await pool.query('SELECT * FROM managed_resources WHERE id=$1 AND tenant_id=$2', [req.params.id, t])).rows[0];
-  if (!row) throw fail('NOT_FOUND', 'resource not found', 404);
-  const action = req.body?.action;
-  const next = transitions[row.state]?.[action];
-  if (!next) throw fail('CONFLICT', `illegal transition ${action} from ${row.state}`, 409);
-  const r = (await pool.query('UPDATE managed_resources SET state=$1 WHERE id=$2 RETURNING *', [next, row.id])).rows[0];
-  await audit(pool, ctx, `resource.${action}`, 'managed_resource', row.id, { from: row.state, to: next });
-  return sendCompat(req, reply, { ...r, availableActions: Object.keys(transitions[next] || {}) });
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'resource.manage', permission: 'app.manage',
+    handler: async ({ tenantId }) => {
+      const row = (await pool.query('SELECT * FROM managed_resources WHERE id=$1 AND tenant_id=$2', [req.params.id, tenantId])).rows[0];
+      if (!row) throw fail('NOT_FOUND', 'resource not found', 404);
+      const action = req.body?.action;
+      const next = transitions[row.state]?.[action];
+      if (!next) throw fail('CONFLICT', `illegal transition ${action} from ${row.state}`, 409);
+      const r = (await pool.query('UPDATE managed_resources SET state=$1 WHERE id=$2 RETURNING *', [next, row.id])).rows[0];
+      await audit(pool, req.bridge, `resource.${action}`, 'managed_resource', row.id, { from: row.state, to: next });
+      return { ...r, availableActions: Object.keys(transitions[next] || {}) };
+    }
+  }));
 });
 
 app.get('/api/affiliates', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'affiliate.manage');
-  return sendCompat(req, reply, (await pool.query('SELECT * FROM affiliates WHERE tenant_id=$1 ORDER BY created_at DESC', [t])).rows);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'affiliate.manage', permission: 'affiliate.manage',
+    handler: async ({ tenantId }) => {
+      return (await pool.query('SELECT * FROM affiliates WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId])).rows;
+    }
+  }));
 });
 app.post('/api/affiliates', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'affiliate.manage');
   const { name, email, commissionRate = 0.1 } = req.body || {};
-  const code = crypto.randomBytes(9).toString('base64url');
-  const r = (await pool.query(
-    'INSERT INTO affiliates(tenant_id,code,name,email,commission_rate) VALUES($1,$2,$3,$4,$5) RETURNING *',
-    [t, code, name, email, commissionRate]
-  )).rows[0];
-  await audit(pool, ctx, 'affiliate.create', 'affiliate', r.id);
-  return sendCompat(req, reply, r, 201);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'affiliate.manage', permission: 'affiliate.manage',
+    handler: async ({ tenantId }) => {
+      const code = crypto.randomBytes(9).toString('base64url');
+      const r = (await pool.query(
+        'INSERT INTO affiliates(tenant_id,code,name,email,commission_rate) VALUES($1,$2,$3,$4,$5) RETURNING *',
+        [tenantId, code, name, email, commissionRate]
+      )).rows[0];
+      await audit(pool, req.bridge, 'affiliate.create', 'affiliate', r.id);
+      return r;
+    }
+  }), 201);
 });
 app.post('/api/conversions', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'affiliate.manage');
   const { affiliateId, externalKey, amount } = req.body || {};
-  const a = (await pool.query(`SELECT * FROM affiliates WHERE id=$1 AND tenant_id=$2 AND status='active'`, [affiliateId, t])).rows[0];
-  if (!a) throw fail('NOT_FOUND', 'affiliate not found', 404);
-  const commission = Number(amount) * Number(a.commission_rate);
-  const r = (await pool.query(
-    `INSERT INTO conversions(tenant_id,affiliate_id,external_key,amount,commission)
-     VALUES($1,$2,$3,$4,$5)
-     ON CONFLICT(tenant_id,external_key) DO UPDATE SET external_key=excluded.external_key
-     RETURNING *`,
-    [t, affiliateId, externalKey, amount, commission]
-  )).rows[0];
-  await audit(pool, ctx, 'conversion.record', 'conversion', r.id);
-  return sendCompat(req, reply, r, 201);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'affiliate.manage', permission: 'affiliate.manage',
+    handler: async ({ tenantId }) => {
+      const a = (await pool.query(`SELECT * FROM affiliates WHERE id=$1 AND tenant_id=$2 AND status='active'`, [affiliateId, tenantId])).rows[0];
+      if (!a) throw fail('NOT_FOUND', 'affiliate not found', 404);
+      const commission = Number(amount) * Number(a.commission_rate);
+      const r = (await pool.query(
+        `INSERT INTO conversions(tenant_id,affiliate_id,external_key,amount,commission)
+         VALUES($1,$2,$3,$4,$5)
+         ON CONFLICT(tenant_id,external_key) DO UPDATE SET external_key=excluded.external_key
+         RETURNING *`,
+        [tenantId, affiliateId, externalKey, amount, commission]
+      )).rows[0];
+      await audit(pool, req.bridge, 'conversion.record', 'conversion', r.id);
+      return r;
+    }
+  }), 201);
 });
 
 app.get('/api/security/rules', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'security.manage');
-  return sendCompat(req, reply, (await pool.query('SELECT * FROM security_rules WHERE tenant_id=$1 ORDER BY created_at DESC', [t])).rows);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'security.manage', permission: 'security.manage',
+    handler: async ({ tenantId }) => {
+      return (await pool.query('SELECT * FROM security_rules WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId])).rows;
+    }
+  }));
 });
 app.post('/api/security/rules', async (req, reply) => {
-  const ctx = req.bridge;
-  const t = requireTenant(ctx);
-  authorize(ctx, 'security.manage');
   const { action, target, reason, expiresAt = null, provider = 'bridge' } = req.body || {};
-  if (!['BLOCK', 'ALLOW', 'CHALLENGE', 'OBSERVE'].includes(action)) throw fail('VALIDATION', 'invalid action');
-  const r = (await pool.query(
-    'INSERT INTO security_rules(tenant_id,action,target,reason,expires_at,provider) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
-    [t, action, target, reason, expiresAt, provider]
-  )).rows[0];
-  await audit(pool, ctx, 'security.rule.create', 'security_rule', r.id);
-  return sendCompat(req, reply, r, 201);
+  return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
+    capabilityId: 'security.manage', permission: 'security.manage',
+    handler: async ({ tenantId }) => {
+      if (!['BLOCK', 'ALLOW', 'CHALLENGE', 'OBSERVE'].includes(action)) throw fail('VALIDATION', 'invalid action');
+      const r = (await pool.query(
+        'INSERT INTO security_rules(tenant_id,action,target,reason,expires_at,provider) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
+        [tenantId, action, target, reason, expiresAt, provider]
+      )).rows[0];
+      await audit(pool, req.bridge, 'security.rule.create', 'security_rule', r.id);
+      return r;
+    }
+  }), 201);
 });
 
 app.post('/api/provision', async (req, reply) => {

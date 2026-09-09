@@ -38,4 +38,11 @@ CREATE TABLE IF NOT EXISTS puck_pages(
 UPDATE providers SET status='READY', config = COALESCE(config,'{}'::jsonb) || '{"deepLink":true}'::jsonb
 WHERE id IN ('puck-builder','gutenberg-builder');
 
+INSERT INTO capabilities(id, description, approval_default, owner_subsystem) VALUES
+('resource.read', 'Read managed resources', 'AUTO', 'platform'),
+('resource.manage', 'Manage resources lifecycle', 'ADMIN_APPROVAL', 'platform'),
+('affiliate.manage', 'Manage affiliates and conversions', 'AUTO', 'platform'),
+('security.manage', 'Manage security and IP rules', 'ADMIN_APPROVAL', 'platform')
+ON CONFLICT DO NOTHING;
+
 INSERT INTO schema_migrations(id) VALUES ('003-gap-closures') ON CONFLICT DO NOTHING;

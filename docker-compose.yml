@@ -15,6 +15,7 @@ services:
       - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/docker-entrypoint-initdb.d/005-marketplace-agents-frontend-mcp.sql:ro
       - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/docker-entrypoint-initdb.d/006-marketplace-agent-frontend-governance.sql:ro
       - ./infra/postgres/007-demo-client-tenant-relationships.sql:/docker-entrypoint-initdb.d/007-demo-client-tenant-relationships.sql:ro
+      - ./infra/postgres/008-demo-ecosystem.sql:/docker-entrypoint-initdb.d/008-demo-ecosystem.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -36,6 +37,7 @@ services:
       - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/migration-input/005-marketplace-agents-frontend-mcp.sql:ro
       - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/migration-input/006-marketplace-agent-frontend-governance.sql:ro
       - ./infra/postgres/007-demo-client-tenant-relationships.sql:/migration-input/007-demo-client-tenant-relationships.sql:ro
+      - ./infra/postgres/008-demo-ecosystem.sql:/migration-input/008-demo-ecosystem.sql:ro
     depends_on:
       postgres:
         condition: service_healthy

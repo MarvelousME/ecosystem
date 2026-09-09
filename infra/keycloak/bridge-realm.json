@@ -59,14 +59,25 @@
       "username": "bridgeadmin",
       "enabled": true,
       "email": "admin@example.test",
+      "emailVerified": true,
+      "firstName": "Bridge",
+      "lastName": "Administrator",
       "credentials": [
         {
           "type": "password",
-          "value": "BridgeAdmin!123",
+          "value": "BridgeAdmin!Demo2026",
           "temporary": false
         }
       ],
       "realmRoles": ["platform_admin"]
-    }
+    },
+    { "username": "demo.owner", "enabled": true, "email": "owner@democompany.test", "emailVerified": true, "firstName": "Avery", "lastName": "Dlamini", "credentials": [{"type":"password","value":"DemoOwner!2026","temporary":false}], "realmRoles": ["tenant_admin"] },
+    { "username": "demo.billing", "enabled": true, "email": "billing.manager@democompany.test", "emailVerified": true, "firstName": "Lerato", "lastName": "Mokoena", "credentials": [{"type":"password","value":"DemoBilling!2026","temporary":false}], "realmRoles": ["tenant_admin"] },
+    { "username": "demo.ops", "enabled": true, "email": "ops@democompany.test", "emailVerified": true, "firstName": "Sam", "lastName": "Naidoo", "credentials": [{"type":"password","value":"DemoOps!2026","temporary":false}], "realmRoles": ["tenant_user"] },
+    { "username": "demo.content", "enabled": true, "email": "content@democompany.test", "emailVerified": true, "firstName": "Mia", "lastName": "Botha", "credentials": [{"type":"password","value":"DemoContent!2026","temporary":false}], "realmRoles": ["tenant_user"] },
+    { "username": "northstar.owner", "enabled": true, "email": "owner@northstar-ops.test", "emailVerified": true, "firstName": "Jordan", "lastName": "Khumalo", "credentials": [{"type":"password","value":"NorthstarOwner!2026","temporary":false}], "realmRoles": ["tenant_admin"] },
+    { "username": "northstar.security", "enabled": true, "email": "security@northstar-ops.test", "emailVerified": true, "firstName": "Priya", "lastName": "Pillay", "credentials": [{"type":"password","value":"NorthstarSec!2026","temporary":false}], "realmRoles": ["tenant_admin"] },
+    { "username": "northstar.developer", "enabled": true, "email": "developer@northstar-ops.test", "emailVerified": true, "firstName": "Theo", "lastName": "Jacobs", "credentials": [{"type":"password","value":"NorthstarDev!2026","temporary":false}], "realmRoles": ["tenant_user"] },
+    { "username": "northstar.billing", "enabled": true, "email": "billing@northstar-ops.test", "emailVerified": true, "firstName": "Nandi", "lastName": "Sithole", "credentials": [{"type":"password","value":"NorthstarBilling!2026","temporary":false}], "realmRoles": ["tenant_admin"] }
   ]
 }

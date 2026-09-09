@@ -105,10 +105,13 @@ export const platformApi = {
   navigation: () => apiFetch<Array<{ id: string; label: string; href: string; permission?: string }>>('/api/navigation'),
   commandCenter: () => apiFetch<Record<string, number>>('/api/command-center'),
   tenants: () => apiFetch<Array<Record<string, unknown>>>('/api/tenants'),
+  tenant360: (id: string) => apiFetch<Record<string, unknown>>(`/api/tenants/${id}/360`),
   apps: () => apiFetch<Array<Record<string, unknown>>>('/api/apps'),
   createApp: (body: Record<string, unknown>) =>
     apiFetch<Record<string, unknown>>('/api/apps', { method: 'POST', body: JSON.stringify(body) }),
   clients: () => apiFetch<Array<Record<string, unknown>>>('/api/clients'),
+  createClient: (body: { name: string; email?: string }) =>
+    apiFetch<Record<string, unknown>>('/api/clients', { method: 'POST', body: JSON.stringify(body) }),
   client360: (id: string) => apiFetch<Record<string, unknown>>(`/api/clients/${id}/360`),
   products: () => apiFetch<Array<Record<string, unknown>>>('/api/products'),
   createOrder: (body: Record<string, unknown>) =>

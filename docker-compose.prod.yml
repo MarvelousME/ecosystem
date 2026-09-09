@@ -38,6 +38,7 @@ services:
       - ./infra/postgres/004-production-capability-convergence.sql:/docker-entrypoint-initdb.d/004-production-capability-convergence.sql:ro
       - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/docker-entrypoint-initdb.d/005-marketplace-agents-frontend-mcp.sql:ro
       - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/docker-entrypoint-initdb.d/006-marketplace-agent-frontend-governance.sql:ro
+      - ./infra/postgres/007-demo-client-tenant-relationships.sql:/docker-entrypoint-initdb.d/007-demo-client-tenant-relationships.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -59,6 +60,7 @@ services:
       - ./infra/postgres/004-production-capability-convergence.sql:/migrations/004-production-capability-convergence.sql:ro
       - ./infra/postgres/005-marketplace-agents-frontend-mcp.sql:/migrations/005-marketplace-agents-frontend-mcp.sql:ro
       - ./infra/postgres/006-marketplace-agent-frontend-governance.sql:/migrations/006-marketplace-agent-frontend-governance.sql:ro
+      - ./infra/postgres/007-demo-client-tenant-relationships.sql:/migrations/007-demo-client-tenant-relationships.sql:ro
     depends_on:
       postgres:
         condition: service_healthy

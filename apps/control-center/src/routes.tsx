@@ -21,6 +21,8 @@ import { MarketplacePage } from '~/features/marketplace/MarketplacePage';
 import { InstallationsPage } from '~/features/marketplace/InstallationsPage';
 import { AgentsPage } from '~/features/agents/AgentsPage';
 import { FrontendMcpPage } from '~/features/frontend-mcp/FrontendMcpPage';
+import { Client360Page, ClientsPage } from '~/features/clients/Client360Page';
+import { Tenant360Page } from '~/features/tenants/Tenant360Page';
 import { platformApi } from '~/api/platform';
 
 export type AppRoute = {
@@ -42,13 +44,13 @@ export const appRoutes: AppRoute[] = [
     ),
     shell: true
   },
+  { path: '/tenants/:tenantId', component: Tenant360Page, shell: true },
   {
     path: '/clients',
-    component: () => (
-      <GenericResourcePage title="Clients" subtitle="Client directory" loader={() => platformApi.clients()} columns={['name', 'email', 'id']} />
-    ),
+    component: ClientsPage,
     shell: true
   },
+  { path: '/clients/:clientId', component: Client360Page, shell: true },
   { path: '/marketplace', component: MarketplacePage, shell: true },
   { path: '/apps', component: AppsPage, shell: true },
   { path: '/my-apps', component: InstallationsPage, shell: true },

@@ -108,6 +108,24 @@ export function registerDomainRoutes(app, { pool }) {
     authorize(ctx, 'tenant.read');
     return ok((await pool.query('SELECT * FROM tenants ORDER BY name')).rows, ctx);
   });
+  app.get('/api/tenants/:id/360', async (req) => {
+    const ctx = req.bridge;
+    authorize(ctx, 'tenant.read');
+    const tenantId = req.params.id;
+    if (!ctx.actor.roles.includes('platform.admin') && ctx.tenantId !== tenantId) throw fail('FORBIDDEN', 'tenant access denied', 403);
+    const tenant = (await pool.query('SELECT * FROM tenants WHERE id=$1', [tenantId])).rows[0];
+    if (!tenant) throw fail('NOT_FOUND', 'tenant not found', 404);
+    const one = async (sql) => (await pool.query(sql, [tenantId])).rows;
+    const [apps, agents, workflows, databases, tickets] = await Promise.all([
+      one('SELECT id,name,app_type,lifecycle_status,health FROM apps WHERE tenant_id=$1 ORDER BY name'),
+      one('SELECT id,name,agent_key,lifecycle_state,enabled FROM agent_instances WHERE tenant_id=$1 ORDER BY name'),
+      one('SELECT id,name,status,created_at FROM workflows WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 20'),
+      one('SELECT id,engine,database_name,status FROM database_instances WHERE tenant_id=$1 ORDER BY created_at DESC'),
+      one('SELECT id,subject,priority,status,created_at FROM support_tickets WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 20')
+    ]);
+    const entitlement = (await pool.query('SELECT limits,usage FROM entitlements WHERE tenant_id=$1', [tenantId])).rows[0] || { limits: {}, usage: {} };
+    return ok({ tenant, entitlement, apps, agents, workflows, databases, tickets }, ctx);
+  });
   app.post('/api/tenants', async (req, reply) => {
     const ctx = req.bridge;
     authorize(ctx, 'tenant.manage');

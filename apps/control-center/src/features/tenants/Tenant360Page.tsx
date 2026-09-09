@@ -1,0 +1,8 @@
+import { A, useParams } from '@solidjs/router';
+import { For, Show, createResource } from 'solid-js';
+import { platformApi } from '~/api/platform';
+
+export function Tenant360Page() {
+  const params = useParams(); const [data] = createResource(() => params.tenantId, (id) => platformApi.tenant360(id)); const value = () => data() as any;
+  return <section><Show when={value()} fallback={<div class="panel panel-pad">Loading tenant workspace…</div>}><div class="page-header"><div><A href="/tenants">Tenants</A><h1>{value().tenant.name}</h1><p>{value().tenant.plan} · {value().tenant.isolation_mode}</p></div></div><div class="metric-grid"><article class="panel panel-pad"><small>Apps</small><h2>{value().apps.length}</h2></article><article class="panel panel-pad"><small>Agents</small><h2>{value().agents.length}</h2></article><article class="panel panel-pad"><small>Databases</small><h2>{value().databases.length}</h2></article><article class="panel panel-pad"><small>Open tickets</small><h2>{value().tickets.filter((t: any) => t.status !== 'closed').length}</h2></article></div><div class="split-2" style={{ 'margin-top': '1rem' }}><div class="panel panel-pad"><h3>Applications</h3><For each={value().apps}>{(app: any) => <p>{app.name} · {app.lifecycle_status} · {app.health}</p>}</For><h3>Entitlements</h3><pre>{JSON.stringify(value().entitlement, null, 2)}</pre></div><div class="panel panel-pad"><h3>Agents</h3><For each={value().agents}>{(agent: any) => <p>{agent.name} · {agent.lifecycle_state}</p>}</For><h3>Workflows</h3><For each={value().workflows}>{(workflow: any) => <p>{workflow.name} · {workflow.status}</p>}</For></div></div></Show></section>;
+}

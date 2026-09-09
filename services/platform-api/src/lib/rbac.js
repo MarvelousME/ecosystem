@@ -14,21 +14,28 @@ export const PERMISSIONS = [
   'affiliate.manage',
   'security.manage',
   'support.impersonate',
-  'platform.admin'
+  'platform.admin',
+  'marketplace.read', 'marketplace.install', 'marketplace.uninstall', 'marketplace.manage',
+  'agent.template.read', 'agent.template.instantiate', 'agent.instance.manage',
+  'frontend.mcp.use', 'frontend.mcp.publish'
 ];
 
 const ROLE_GRANTS = {
   'platform.admin': PERMISSIONS,
-  'tenant.admin': PERMISSIONS.filter(p => p !== 'platform.admin' && p !== 'support.impersonate'),
+  'tenant.admin': PERMISSIONS.filter(p => p !== 'platform.admin' && p !== 'support.impersonate' && p !== 'marketplace.manage'),
   'tenant.editor': [
     'tenant.read', 'app.read', 'app.create', 'app.manage',
     'website.read', 'website.edit', 'website.publish',
     'wordpress.manage', 'nextjs.manage',
     'deployment.preview', 'ai.chat.use', 'ai.agent.execute',
-    'cms.read', 'cms.manage', 'billing.read'
+    'cms.read', 'cms.manage', 'billing.read',
+    'marketplace.read', 'marketplace.install', 'marketplace.uninstall',
+    'agent.template.read', 'agent.template.instantiate', 'agent.instance.manage',
+    'frontend.mcp.use'
   ],
   'tenant.viewer': [
-    'tenant.read', 'app.read', 'website.read', 'cms.read', 'billing.read', 'ai.chat.use'
+    'tenant.read', 'app.read', 'website.read', 'cms.read', 'billing.read', 'ai.chat.use',
+    'marketplace.read', 'agent.template.read'
   ],
   'support.impersonate': ['support.impersonate', 'tenant.read', 'app.read', 'website.read']
 };

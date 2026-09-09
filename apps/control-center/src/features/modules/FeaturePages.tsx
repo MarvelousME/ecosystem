@@ -9,10 +9,12 @@ export function AiPage() {
   let root!: HTMLElement;
   const [text, setText] = createSignal('');
   const [msgs, setMsgs] = createSignal<Array<{ role: string; content: string }>>([
-    { role: 'assistant', content: 'AI Workspace — website mutations require approval.' }
+    { role: 'assistant', content: 'AI Workspace — website mutations require approval. Frontend MCP integration available.' }
   ]);
   const [preview, setPreview] = createSignal<any>(null);
   const [err, setErr] = createSignal('');
+  const [mcpRequest, setMcpRequest] = createSignal<any>(null);
+  const [mcpApprovals, setMcpApprovals] = createSignal<any[]>([]);
   onMount(() => pageEnter(root));
 
   async function send() {
@@ -31,6 +33,30 @@ export function AiPage() {
         ]);
         return;
       }
+      if (/frontend|mcp|build/ui/i.test(q)) {
+        // Frontend MCP request
+        const result = await platformApi.frontendMcp.request({
+          providerId: 'threeui-community',
+          toolName: 'frontend.preview.plan',
+          params: { targetApp: 'marketing-site', requirement: q }
+        });
+        setMcpRequest(result);
+        if (result.requiresApproval) {
+          setMsgs((m) => [
+            ...m,
+            { role: 'assistant', content: `Frontend MCP request requires approval. Approval ID: ${result.approvalId}` }
+          ]);
+          // Refresh approvals
+          const approvals = await platformApi.frontendMcp.approvals();
+          setMcpApprovals(approvals);
+        } else {
+          setMsgs((m) => [
+            ...m,
+            { role: 'assistant', content: `Frontend MCP executed: ${JSON.stringify(result.result)}` }
+          ]);
+        }
+        return;
+      }
       const r = await platformApi.aiChat([...msgs(), { role: 'user', content: q }]);
       setMsgs((m) => [...m, { role: 'assistant', content: r.content || '(empty)' }]);
     } catch (ex: any) {
@@ -44,6 +70,39 @@ export function AiPage() {
       await platformApi.approveChangeset(cs.id);
     }
     setMsgs((m) => [...m, { role: 'assistant', content: 'Approved and published changesets.' }]);
+    setPreview(null);
+  }
+
+  async function approveMcp(approvalId: string) {
+    try {
+      const result = await platformApi.frontendMcp.approve(approvalId);
+      setMsgs((m) => [
+        ...m,
+        { role: 'assistant', content: `Frontend MCP approved: ${JSON.stringify(result)}` }
+      ]);
+      setMcpRequest(null);
+      // Refresh approvals
+      const approvals = await platformApi.frontendMcp.approvals();
+      setMcpApprovals(approvals);
+    } catch (e: any) {
+      setErr(`Failed to approve: ${e.message}`);
+    }
+  }
+
+  async function rejectMcp(approvalId: string) {
+    try {
+      await platformApi.frontendMcp.reject(approvalId);
+      setMsgs((m) => [
+        ...m,
+        { role: 'assistant', content: 'Frontend MCP request rejected' }
+      ]);
+      setMcpRequest(null);
+      // Refresh approvals
+      const approvals = await platformApi.frontendMcp.approvals();
+      setMcpApprovals(approvals);
+    } catch (e: any) {
+      setErr(`Failed to reject: ${e.message}`);
+    }
   }
 
   return (
@@ -51,7 +110,7 @@ export function AiPage() {
       <div class="page-header">
         <div>
           <h1>AI Workspace</h1>
-          <p>Agents · approvals · artifacts via Bridge capabilities</p>
+          <p>Agents · approvals · artifacts · Frontend MCP via Bridge capabilities</p>
         </div>
       </div>
       <div class="panel panel-pad" style={{ 'min-height': '280px', 'margin-bottom': '1rem' }}>
@@ -64,6 +123,32 @@ export function AiPage() {
           <button class="btn btn-primary" type="button" onClick={approveAll}>Approve & Publish</button>
         </div>
       </Show>
+      <Show when={mcpRequest()}>
+        <div class="panel panel-pad" style={{ 'margin-bottom': '1rem' }}>
+          <h3>Frontend MCP Request</h3>
+          <pre style={{ 'font-family': 'var(--bridge-mono)', 'font-size': '0.75rem' }}>{JSON.stringify(mcpRequest(), null, 2)}</pre>
+          <Show when={mcpRequest().requiresApproval}>
+            <p style={{ color: 'var(--bridge-warning)' }}>This request requires approval.</p>
+          </Show>
+        </div>
+      </Show>
+      <Show when={mcpApprovals().length > 0}>
+        <div class="panel panel-pad" style={{ 'margin-bottom': '1rem' }}>
+          <h3>Pending Frontend MCP Approvals</h3>
+          <For each={mcpApprovals()}>
+            {(approval: any) => (
+              <div style={{ 'margin-bottom': '0.5rem', 'padding': '0.5rem', 'border': '1px solid var(--bridge-border)', 'border-radius': '4px' }}>
+                <p><strong>Request:</strong> {approval.request_type}</p>
+                <p><strong>Created:</strong> {new Date(approval.created_at).toLocaleString()}</p>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button class="btn btn-primary" type="button" onClick={() => approveMcp(approval.id)}>Approve</button>
+                  <button class="btn" type="button" onClick={() => rejectMcp(approval.id)}>Reject</button>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
       <Show when={err()}><p style={{ color: 'var(--bridge-danger)' }}>{err()}</p></Show>
       <Form onSubmit={send}>
         <div style={{ display: 'flex', gap: '0.5rem', 'align-items': 'end' }}>
@@ -73,7 +158,7 @@ export function AiPage() {
               name="prompt"
               value={text()}
               onChange={setText}
-              placeholder="Ask Bridge AI… e.g. change phone to +1-555-0199"
+              placeholder="Ask Bridge AI… e.g. change phone to +1-555-0199, or 'build UI with Frontend MCP'"
             />
           </div>
           <SubmitButton disabled={!workspaceStore.tenantId}>Send</SubmitButton>

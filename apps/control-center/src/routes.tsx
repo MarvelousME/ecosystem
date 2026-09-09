@@ -17,6 +17,8 @@ import {
   InfrastructurePage,
   SecurityPage
 } from '~/features/modules/FeaturePages';
+import { MarketplacePage, InstallationsPage } from '~/features/marketplace/MarketplacePage';
+import { AgentsPage } from '~/features/agents/AgentsPage';
 import { platformApi } from '~/api/platform';
 
 export type AppRoute = {
@@ -45,9 +47,12 @@ export const appRoutes: AppRoute[] = [
     ),
     shell: true
   },
+  { path: '/marketplace', component: MarketplacePage, shell: true },
   { path: '/apps', component: AppsPage, shell: true },
+  { path: '/my-apps', component: InstallationsPage, shell: true },
   { path: '/build', component: BuildRoute, shell: true },
   { path: '/ai', component: AiPage, shell: true },
+  { path: '/agents', component: AgentsPage, shell: true },
   { path: '/automation', component: AutomationRoute, shell: true },
   {
     path: '/sagas',

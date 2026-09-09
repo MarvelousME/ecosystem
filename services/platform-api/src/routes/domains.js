@@ -20,9 +20,12 @@ export function registerDomainRoutes(app, { pool }) {
     const isAdmin = granted.has('platform.admin');
     const items = [
       { id: 'command-center', label: 'Command Center', href: '#/command' },
-      { id: 'apps', label: 'Apps', href: '#/apps', permission: 'app.read' },
+      { id: 'marketplace', label: 'Marketplace', href: '#/marketplace', permission: 'marketplace.read' },
+      { id: 'apps', label: 'App Launcher', href: '#/apps', permission: 'app.read' },
+      { id: 'my-apps', label: 'My Apps', href: '#/my-apps', permission: 'app.read' },
       { id: 'build', label: 'Build', href: '#/build', permission: 'cms.read' },
-      { id: 'ai', label: 'AI', href: '#/ai', permission: 'ai.chat.use' },
+      { id: 'ai', label: 'AI Workspace', href: '#/ai', permission: 'ai.chat.use' },
+      { id: 'agents', label: 'Agents', href: '#/agents', permission: 'agent.instance.manage' },
       { id: 'automation', label: 'Automation', href: '#/automation', permission: 'tenant.manage' },
       { id: 'commerce', label: 'Commerce', href: '#/commerce', permission: 'billing.read' },
       { id: 'infrastructure', label: 'Infrastructure', href: '#/infra', permission: 'database.provision' },

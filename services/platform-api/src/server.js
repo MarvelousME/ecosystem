@@ -79,24 +79,45 @@ app.setErrorHandler((err, req, reply) => {
 });
 
 app.get('/health', async () => {
-  const r = await pool.query('select 1 ok');
-  const redis = await redisPing();
-  const secrets = await secretsHealth();
-  const ready =
-    r.rows[0].ok === 1 &&
-    !(process.env.NODE_ENV === 'production' && resolveSecretsProviderName() === 'aws-kms' && secrets.status !== 'ready');
-  return {
-    status: ready ? 'healthy' : 'unhealthy',
-    service: 'bridge-platform-api',
-    redis,
-    clickhouseConfigured: clickhouseEnabled(),
-    jwtRequired: process.env.BRIDGE_REQUIRE_JWT === '1' || process.env.NODE_ENV === 'production',
-    headersTrusted: !headersUntrusted(),
-    secrets,
-    natsPublish: false,
-    outboxOnly: true
-  };
+  return { status: 'alive', natsPublish: false };
 });
+
+app.get('/ready', async (_, reply) => {
+  try {
+    const r = await pool.query('select 1 ok');
+    const redis = await redisPing();
+    const secrets = await secretsHealth();
+    
+    // Explicit production fail-closed dependencies
+    const isProd = process.env.NODE_ENV === 'production';
+    const usesKms = resolveSecretsProviderName() === 'aws-kms';
+    
+    if (isProd && usesKms && secrets.status !== 'ready') {
+      return reply.code(503).send({
+        status: 'unhealthy',
+        detail: 'KMS is required in production but is not ready',
+        secrets
+      });
+    }
+
+    if (r.rows[0].ok !== 1) {
+      return reply.code(503).send({ status: 'unhealthy', detail: 'Database check failed' });
+    }
+
+    return {
+      status: 'ready',
+      checks: {
+        postgres: 'healthy',
+        redis: redis ? 'healthy' : 'unhealthy',
+        kms: secrets.status === 'ready' ? 'healthy' : secrets.status,
+        objectStorage: process.env.BRIDGE_OBJECT_STORAGE_PROVIDER === 's3' ? 'configured' : 'local'
+      }
+    };
+  } catch (e) {
+    return reply.code(503).send({ status: 'unhealthy', detail: e.message });
+  }
+});
+
 
 app.get('/metrics', async (_, reply) => {
   const tenants = (await pool.query('SELECT COUNT(*)::int c FROM tenants')).rows[0].c;
@@ -157,7 +178,7 @@ app.post('/api/resources/:id/lifecycle', async (req, reply) => {
 
 app.get('/api/affiliates', async (req, reply) => {
   return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
-    capabilityId: 'affiliate.manage', permission: 'affiliate.manage',
+    capabilityId: 'affiliate.read', permission: 'affiliate.read',
     handler: async ({ tenantId }) => {
       return (await pool.query('SELECT * FROM affiliates WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId])).rows;
     }
@@ -201,7 +222,7 @@ app.post('/api/conversions', async (req, reply) => {
 
 app.get('/api/security/rules', async (req, reply) => {
   return sendCompat(req, reply, await executeCapability(pool, req.bridge, {
-    capabilityId: 'security.manage', permission: 'security.manage',
+    capabilityId: 'security.read', permission: 'security.read',
     handler: async ({ tenantId }) => {
       return (await pool.query('SELECT * FROM security_rules WHERE tenant_id=$1 ORDER BY created_at DESC', [tenantId])).rows;
     }

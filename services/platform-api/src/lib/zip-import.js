@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fail } from './kernel.js';
+import { getObjectStorage } from './storage.js';
 
 const EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
 
@@ -64,18 +65,18 @@ export async function ingestZipImport(pool, ctx, { filename, contentBase64, appI
 
   const id = crypto.randomUUID();
   const safeName = String(filename || 'site.zip').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
-  const dir = path.join(quarantineRoot(), String(ctx.tenantId || 'unknown'));
-  await fs.mkdir(dir, { recursive: true });
-  const storedPath = path.join(dir, `${id}-${safeName}`);
-  await fs.writeFile(storedPath, buf);
-
+  
   const scan = await scanBuffer(buf, { filename: safeName });
   const status = scan.clean ? 'quarantined' : 'rejected';
+  
+  const objectKey = `quarantine/${ctx.tenantId || 'unknown'}/${id}-${safeName}`;
+  const storage = getObjectStorage();
+  await storage.put(objectKey, buf);
 
   const r = await pool.query(
     `INSERT INTO zip_imports(id,tenant_id,application_id,filename,stored_path,status,scan_engine,scan_detail,bytes)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [id, ctx.tenantId, appId, safeName, storedPath, status, scan.engine, scan.detail, buf.length]
+    [id, ctx.tenantId, appId, safeName, objectKey, status, scan.engine, scan.detail, buf.length]
   );
 
   if (!scan.clean) {

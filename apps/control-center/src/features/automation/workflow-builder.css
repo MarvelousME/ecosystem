@@ -1,0 +1,48 @@
+.wf-canvas {
+  position: relative;
+  height: 420px;
+  margin-top: 1rem;
+  border: 1px dashed var(--bridge-border-strong);
+  border-radius: var(--bridge-radius);
+  background:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bridge-bg);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.wf-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.wf-node {
+  position: absolute;
+  width: 120px;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--bridge-border-strong);
+  background: var(--bridge-bg-panel);
+  cursor: grab;
+  user-select: none;
+}
+
+.wf-node span {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--bridge-text-faint);
+}
+
+.wf-node strong {
+  font-size: 0.85rem;
+}
+
+.wf-trigger { box-shadow: inset 2px 0 0 var(--bridge-accent-2); }
+.wf-action { box-shadow: inset 2px 0 0 var(--bridge-accent); }
+.wf-condition { box-shadow: inset 2px 0 0 var(--bridge-warn); }
+.wf-agent { box-shadow: inset 2px 0 0 #ff8fab; }
+.wf-capability { box-shadow: inset 2px 0 0 #b388ff; }
+.wf-delay { box-shadow: inset 2px 0 0 var(--bridge-text-muted); }

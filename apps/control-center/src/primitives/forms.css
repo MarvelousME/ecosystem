@@ -1,0 +1,97 @@
+.bf-form {
+  display: grid;
+  gap: var(--bridge-space-4);
+}
+
+.bf-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.bf-label {
+  font-size: 0.82rem;
+  color: var(--bridge-text-muted);
+}
+
+.bf-control {
+  width: 100%;
+  border: 1px solid var(--bridge-border);
+  background: var(--bridge-bg);
+  border-radius: var(--bridge-radius-sm);
+  padding: 0.6rem 0.75rem;
+  color: var(--bridge-text);
+}
+
+.bf-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.bf-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--bridge-text-faint);
+}
+
+.bf-error {
+  margin: 0;
+  color: var(--bridge-danger);
+  font-size: 0.8rem;
+}
+
+.bf-select-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.bf-select-content {
+  background: var(--bridge-bg-panel);
+  border: 1px solid var(--bridge-border);
+  border-radius: var(--bridge-radius-sm);
+  box-shadow: var(--bridge-shadow);
+  z-index: 60;
+  overflow: hidden;
+}
+
+.bf-select-item {
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+
+.bf-select-item[data-highlighted] {
+  background: var(--bridge-bg-soft);
+}
+
+.bf-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.bf-switch-control {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bridge-bg-soft);
+  border: 1px solid var(--bridge-border);
+  padding: 2px;
+}
+
+.bf-switch-thumb {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bridge-text-muted);
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.bf-switch[data-checked] .bf-switch-control {
+  background: color-mix(in srgb, var(--bridge-accent) 35%, var(--bridge-bg-soft));
+}
+
+.bf-switch[data-checked] .bf-switch-thumb {
+  transform: translateX(18px);
+  background: var(--bridge-accent);
+}

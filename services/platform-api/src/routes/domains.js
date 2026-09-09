@@ -536,6 +536,122 @@ export function registerDomainRoutes(app, { pool }) {
     await audit(pool, ctx, 'workflow.execute', 'workflow_execution', exec.id);
     return reply.code(201).send(ok(exec, ctx));
   });
+  app.put('/api/workflows/:id', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'tenant.manage');
+    const { name, definition } = req.body || {};
+    const r = (await pool.query(
+      `UPDATE workflows SET name=COALESCE($3,name), definition=COALESCE($4,definition)
+       WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, t, name || null, definition || null]
+    )).rows[0];
+    if (!r) throw fail('NOT_FOUND', 'workflow not found', 404);
+    await audit(pool, ctx, 'workflow.update', 'workflow', r.id);
+    return ok(r, ctx);
+  });
+
+  // --- Sagas list + ops observability (real Postgres data only) ---
+  app.get('/api/sagas', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'app.read');
+    const limit = Math.min(200, Number(req.query.limit || 50));
+    return ok(
+      (await pool.query(
+        `SELECT id,saga_type,state,step,current_step,attempts,last_error,created_at,updated_at
+         FROM sagas WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2`,
+        [t, limit]
+      )).rows,
+      ctx
+    );
+  });
+
+  app.get('/api/logs', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'tenant.read');
+    const limit = Math.min(1000, Number(req.query.limit || 200));
+    const cursor = req.query.cursor ? Number(req.query.cursor) : null;
+    const q = String(req.query.q || '').trim();
+    const params = [t];
+    let sql = `SELECT id, created_at, actor, action, resource_type, resource_id, request_id, metadata
+               FROM audit_log WHERE tenant_id=$1`;
+    if (cursor) {
+      params.push(cursor);
+      sql += ` AND id < $${params.length}`;
+    }
+    if (q) {
+      params.push(`%${q}%`);
+      sql += ` AND (action ILIKE $${params.length} OR actor ILIKE $${params.length} OR resource_type ILIKE $${params.length})`;
+    }
+    params.push(limit);
+    sql += ` ORDER BY id DESC LIMIT $${params.length}`;
+    const rows = (await pool.query(sql, params)).rows;
+    return ok({
+      items: rows.map((r) => ({
+        id: r.id,
+        ts: r.created_at,
+        level: String(r.action).includes('fail') || String(r.action).includes('reject') ? 'error' : 'info',
+        service: 'platform-api',
+        message: `${r.action} ${r.resource_type || ''} ${r.resource_id || ''}`.trim(),
+        actor: r.actor,
+        requestId: r.request_id,
+        correlationId: r.metadata?.correlationId || null,
+        traceId: r.metadata?.traceId || null,
+        metadata: r.metadata
+      })),
+      nextCursor: rows.length ? rows[rows.length - 1].id : null
+    }, ctx);
+  });
+
+  app.get('/api/traces/:correlationId', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'tenant.read');
+    const correlationId = req.params.correlationId;
+    const audits = (await pool.query(
+      `SELECT id, created_at, actor, action, resource_type, resource_id, request_id, metadata
+       FROM audit_log
+       WHERE tenant_id=$1 AND metadata->>'correlationId'=$2
+       ORDER BY id ASC
+       LIMIT 200`,
+      [t, correlationId]
+    )).rows;
+    const saga = (await pool.query(
+      `SELECT s.*, COALESCE(
+         (SELECT json_agg(ss ORDER BY ss.id) FROM saga_steps ss WHERE ss.saga_id=s.id), '[]'::json
+       ) AS steps
+       FROM sagas s
+       WHERE s.tenant_id=$1 AND (s.input->>'correlationId'=$2 OR s.id::text=$2)
+       ORDER BY s.created_at DESC LIMIT 1`,
+      [t, correlationId]
+    )).rows[0];
+    const spans = [];
+    if (saga) {
+      for (const step of saga.steps || []) {
+        spans.push({
+          id: `saga-step-${step.id}`,
+          name: step.step_name,
+          service: 'provision-worker',
+          status: step.status,
+          start: step.created_at || saga.created_at,
+          detail: step.detail
+        });
+      }
+    }
+    for (const a of audits) {
+      spans.push({
+        id: `audit-${a.id}`,
+        name: a.action,
+        service: 'platform-api',
+        status: 'ok',
+        start: a.created_at,
+        detail: { actor: a.actor, resourceType: a.resource_type, resourceId: a.resource_id }
+      });
+    }
+    return ok({ correlationId, saga: saga || null, spans }, ctx);
+  });
 
   // --- Ecosystem catalogs ---
   app.get('/api/capabilities', async (req) => {

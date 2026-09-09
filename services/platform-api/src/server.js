@@ -315,16 +315,36 @@ app.post('/api/cloudflare/purge', async (req, reply) => {
   return sendCompat(req, reply, j);
 });
 
-app.get('/api/audit', async (req, reply) => {
+  app.get('/api/audit', async (req, reply) => {
   const ctx = req.bridge;
   const t = requireTenant(ctx);
   authorize(ctx, 'tenant.read');
+  const limit = Math.min(500, Number(req.query.limit || 250));
   return sendCompat(
     req,
     reply,
-    (await pool.query('SELECT * FROM audit_log WHERE tenant_id=$1 ORDER BY id DESC LIMIT 250', [t])).rows
+    (await pool.query('SELECT * FROM audit_log WHERE tenant_id=$1 ORDER BY id DESC LIMIT $2', [t, limit])).rows
   );
 });
+
+app.get('/api/me', async (req, reply) => {
+  const ctx = req.bridge;
+  return sendCompat(req, reply, {
+    actor: ctx.actor,
+    permissions: ctx.permissions || [],
+    tenantId: ctx.tenantId,
+    roles: ctx.actor.roles,
+    homeProfile: deriveHomeProfile(ctx.actor.roles || [])
+  });
+});
+
+function deriveHomeProfile(roles = []) {
+  if (roles.includes('platform.admin')) return 'platform-admin';
+  if (roles.includes('tenant.admin')) return 'tenant-admin';
+  if (roles.includes('tenant.editor')) return 'developer';
+  if (roles.some((r) => String(r).includes('security'))) return 'security';
+  return 'tenant-viewer';
+}
 
 app.get('/api/isolation/check', async (req, reply) => {
   const ctx = req.bridge;

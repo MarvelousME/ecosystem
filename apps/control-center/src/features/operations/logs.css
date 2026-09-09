@@ -1,0 +1,46 @@
+.log-viewport {
+  margin-top: 1rem;
+  overflow: auto;
+  border: 1px solid var(--bridge-border);
+  border-radius: var(--bridge-radius);
+  font-family: var(--bridge-mono);
+  font-size: 0.75rem;
+}
+
+.log-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 190px 56px 1fr 180px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--bridge-border);
+  white-space: nowrap;
+}
+
+.log-ts { color: var(--bridge-text-faint); }
+.log-lvl { text-transform: uppercase; }
+.log-error .log-lvl { color: var(--bridge-danger); }
+.log-info .log-lvl { color: var(--bridge-accent); }
+.log-msg { overflow: hidden; text-overflow: ellipsis; }
+.log-meta { color: var(--bridge-text-faint); overflow: hidden; text-overflow: ellipsis; }
+
+.trace-list { display: grid; gap: 0.55rem; margin-top: 1rem; }
+.trace-row { display: grid; grid-template-columns: 220px 1fr; gap: 0.75rem; align-items: center; }
+.trace-label span { display: block; color: var(--bridge-text-faint); font-size: 0.75rem; }
+.trace-bar-track {
+  position: relative;
+  height: 18px;
+  background: var(--bridge-bg-soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.trace-bar {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--bridge-accent), var(--bridge-accent-2));
+}

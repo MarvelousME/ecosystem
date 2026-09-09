@@ -146,11 +146,29 @@ services:
     networks: [bridge]
 
   control-center:
-    build: ./apps/control-center
-    environment:
-      VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL}
+    build:
+      context: ./apps/control-center
+      args:
+        VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL:-http://localhost:4000}
+        VITE_OIDC_AUTHORITY: ${VITE_OIDC_AUTHORITY:-http://localhost:8081/realms/bridge}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-bridge-control-center}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-http://localhost:5173/auth/callback}
+        VITE_OIDC_POST_LOGOUT_REDIRECT_URI: ${VITE_OIDC_POST_LOGOUT_REDIRECT_URI:-http://localhost:5173/}
+        VITE_OIDC_SCOPE: ${VITE_OIDC_SCOPE:-openid profile email}
+        VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-0}
+        VITE_REQUIRE_AUTH: ${VITE_REQUIRE_AUTH:-0}
+        VITE_PUCK_HOST_URL: ${VITE_PUCK_HOST_URL:-http://localhost:5174}
     depends_on: [api]
     ports: ["5173:80"]
+    networks: [bridge]
+
+  puck-host:
+    build:
+      context: ./apps/puck-host
+      args:
+        VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL:-http://localhost:4000}
+    depends_on: [api]
+    ports: ["5174:80"]
     networks: [bridge]
 
   wordpress-db:

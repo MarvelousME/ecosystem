@@ -10,11 +10,28 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/001-init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
       - ./infra/postgres/002-platform-expansion.sql:/docker-entrypoint-initdb.d/002-platform-expansion.sql:ro
+      - ./infra/postgres/003-gap-closures.sql:/docker-entrypoint-initdb.d/003-gap-closures.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 30
+    networks: [bridge]
+
+  db-migrate:
+    build:
+      context: ./infra/postgres
+      dockerfile: Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ./infra/postgres/migrations:/migrations:ro
+      - ./infra/postgres/003-gap-closures.sql:/migrations/003-gap-closures.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
     networks: [bridge]
 
   redis:
@@ -46,22 +63,55 @@ services:
     environment:
       PORT: 4000
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      NATS_URL: nats://nats:4222
       REDIS_URL: redis://redis:6379
-      BRIDGE_JWT_ISSUER: http://keycloak:8080/realms/bridge
+      BRIDGE_JWT_ISSUER: ${BRIDGE_JWT_ISSUER}
+      BRIDGE_JWKS_URL: http://keycloak:8080/realms/bridge/protocol/openid-connect/certs
       BRIDGE_JWT_AUDIENCE: ${BRIDGE_JWT_AUDIENCE}
+      BRIDGE_REQUIRE_JWT: ${BRIDGE_REQUIRE_JWT:-0}
+      BRIDGE_TRUST_HEADERS: ${BRIDGE_TRUST_HEADERS:-1}
+      BRIDGE_SECRETS_KEY: ${BRIDGE_SECRETS_KEY:-bridge-lab-secrets-key-change-me}
+      BRIDGE_SECRETS_PROVIDER: ${BRIDGE_SECRETS_PROVIDER:-lab}
+      BRIDGE_QUARANTINE_DIR: /data/quarantine
+      BRIDGE_CORS_ORIGINS: ${BRIDGE_CORS_ORIGINS:-http://localhost:5173}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
       BRIDGE_AI_BASE_URL: ${BRIDGE_AI_BASE_URL}
       BRIDGE_AI_API_KEY: ${BRIDGE_AI_API_KEY}
       BRIDGE_AI_MODEL: ${BRIDGE_AI_MODEL}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
       CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
       WORDPRESS_INTERNAL_URL: http://wordpress
+      MONGODB_URL: ${MONGODB_URL:-}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+    volumes:
+      - api_quarantine:/data/quarantine
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres: {condition: service_healthy}
-      nats: {condition: service_started}
       redis: {condition: service_started}
       keycloak: {condition: service_started}
     ports: ["4000:4000"]
+    networks: [bridge]
+
+  outbox-relay:
+    build: ./services/outbox-relay
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
+      OUTBOX_BATCH: ${OUTBOX_BATCH:-50}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
     networks: [bridge]
 
   provision-worker:
@@ -69,9 +119,20 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      BRIDGE_JS_DURABLE: ${BRIDGE_JS_DURABLE:-PROVISION_WORKER_V1}
+      BRIDGE_JS_FILTER: ${BRIDGE_JS_FILTER:-provision.requested}
+      BRIDGE_JS_ACK_WAIT_NS: ${BRIDGE_JS_ACK_WAIT_NS:-30000000000}
+      BRIDGE_JS_MAX_DELIVER: ${BRIDGE_JS_MAX_DELIVER:-5}
+      MONGODB_URL: ${MONGODB_URL:-}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
     depends_on:
+      db-migrate:
+        condition: service_completed_successfully
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
+      outbox-relay: {condition: service_started}
     networks: [bridge]
 
   frontend-mcp:
@@ -115,6 +176,26 @@ services:
     ports: ["8080:80"]
     networks: [bridge]
 
+  mongodb:
+    image: mongo:7.0
+    profiles: ["mongodb", "databases"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-bridge}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-bridge-mongo-change-me}
+    volumes: [mongodb_data:/data/db]
+    ports: ["27017:27017"]
+    networks: [bridge]
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["mssql", "databases"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD:-Bridge_MsSql_ChangeMe1}
+    volumes: [mssql_data:/var/opt/mssql]
+    ports: ["1433:1433"]
+    networks: [bridge]
+
   clickhouse:
     image: clickhouse/clickhouse-server:25.8
     profiles: ["full"]
@@ -123,6 +204,7 @@ services:
       - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports: ["8123:8123"]
     networks: [bridge]
+    # When using profile full, set CLICKHOUSE_URL=http://clickhouse:8123 on api
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -147,6 +229,9 @@ volumes:
   wordpress_db:
   wordpress_data:
   clickhouse_data:
+  api_quarantine:
+  mongodb_data:
+  mssql_data:
 
 networks:
   bridge:

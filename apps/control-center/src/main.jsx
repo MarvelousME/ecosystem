@@ -1,14 +1,141 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import {
+  getAccessToken,
+  getUser,
+  handleCallback,
+  isAuthenticated,
+  login,
+  logout
+} from './auth.js';
+import { isAuthRequired, resolveApiBaseUrl } from './auth-config.js';
 import './styles.css';
 
-const API = import.meta.env.VITE_BRIDGE_API_URL || 'http://localhost:4000';
+const API = resolveApiBaseUrl(import.meta.env);
+const AUTH_REQUIRED = isAuthRequired(import.meta.env);
 
 function unwrap(x) {
   return x && Object.prototype.hasOwnProperty.call(x, 'data') ? x.data : x;
 }
 
-function App() {
+/** Hash or path route for auth screens; tabs stay in React state. */
+function detectAuthRoute() {
+  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  const hash = (window.location.hash || '').replace(/^#/, '');
+  const route = hash.startsWith('/') ? hash.split('?')[0] : '';
+  if (path === '/auth/callback' || route === '/auth/callback') return 'callback';
+  if (path === '/login' || route === '/login') return 'login';
+  if (path === '/logout' || route === '/logout') return 'logout';
+  return 'app';
+}
+
+function AuthCallback() {
+  const [msg, setMsg] = useState('Completing sign-in…');
+  useEffect(() => {
+    handleCallback()
+      .then(() => {
+        window.location.replace('/');
+      })
+      .catch((e) => setMsg(e.message || 'Sign-in callback failed'));
+  }, []);
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <h1>Bridge</h1>
+        <p>{msg}</p>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ error }) {
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <h1>Bridge</h1>
+        <p>Sign in to the Ecosystem Control Plane</p>
+        {error && <div className="err">{error}</div>}
+        <button type="button" onClick={() => login()}>Log in with OIDC</button>
+      </div>
+    </div>
+  );
+}
+
+function Root() {
+  const [route, setRoute] = useState(detectAuthRoute);
+  const [ready, setReady] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const [userLabel, setUserLabel] = useState('');
+  const [authErr, setAuthErr] = useState('');
+
+  useEffect(() => {
+    const sync = () => setRoute(detectAuthRoute());
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (route === 'logout') {
+      logout().catch((e) => setAuthErr(e.message));
+      return;
+    }
+    if (route === 'callback') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ok = await isAuthenticated();
+        if (cancelled) return;
+        setAuthed(ok);
+        if (ok) {
+          const u = await getUser();
+          setUserLabel(u?.profile?.email || u?.profile?.preferred_username || u?.profile?.name || '');
+        }
+      } catch (e) {
+        if (!cancelled) setAuthErr(e.message);
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [route]);
+
+  if (route === 'callback') return <AuthCallback />;
+  if (route === 'logout') {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card"><h1>Bridge</h1><p>Signing out…</p></div>
+      </div>
+    );
+  }
+  if (route === 'login') {
+    return <LoginScreen error={authErr} />;
+  }
+  if (!ready) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card"><h1>Bridge</h1><p>Loading…</p></div>
+      </div>
+    );
+  }
+  if (AUTH_REQUIRED && !authed) {
+    return <LoginScreen error={authErr || 'Authentication required'} />;
+  }
+
+  return (
+    <App
+      authed={authed}
+      userLabel={userLabel}
+      onLogin={() => login()}
+      onLogout={() => logout()}
+    />
+  );
+}
+
+function App({ authed, userLabel, onLogin, onLogout }) {
   const [tenants, setTenants] = useState([]);
   const [tenant, setTenant] = useState('');
   const [tab, setTab] = useState('command');
@@ -20,15 +147,21 @@ function App() {
   const [impersonation, setImpersonation] = useState(null);
 
   const api = useCallback(async (path, opt = {}) => {
+    const token = await getAccessToken();
     const h = {
       'content-type': 'application/json',
-      'x-actor-roles': 'platform.admin',
       ...(tenant ? { 'x-tenant-id': tenant } : {}),
       ...(impersonation ? {
         'x-impersonate-tenant': impersonation.tenantId,
         'x-impersonate-reason': impersonation.reason
       } : {})
     };
+    // Prefer Bearer when present; lab headers only when no token (and OIDC not forced).
+    if (token) {
+      h.Authorization = `Bearer ${token}`;
+    } else {
+      h['x-actor-roles'] = 'platform.admin';
+    }
     const r = await fetch(API + path, { ...opt, headers: { ...h, ...opt.headers } });
     const x = await r.json();
     if (!r.ok) throw new Error(x?.error?.message || x.error || `HTTP ${r.status}`);
@@ -90,6 +223,14 @@ function App() {
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>
         ))}
         <button className="ghost" onClick={() => setPalette(true)}>Command Palette ⌘K</button>
+        <div className="auth-aside">
+          {userLabel && <p className="auth-user">{userLabel}</p>}
+          {authed ? (
+            <button type="button" className="ghost" onClick={onLogout}>Logout</button>
+          ) : (
+            <button type="button" className="ghost" onClick={onLogin}>Login</button>
+          )}
+        </div>
       </aside>
       <main>
         {impersonation && (
@@ -103,15 +244,22 @@ function App() {
             <h1>{tab.toUpperCase()}</h1>
             <p>One tenant workspace for apps, AI, billing, and operations</p>
           </div>
-          <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
-            {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <div className="header-actions">
+            {authed ? (
+              <button type="button" onClick={onLogout}>Logout</button>
+            ) : (
+              <button type="button" onClick={onLogin}>Login</button>
+            )}
+            <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
+              {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
         </header>
         {err && <div className="err">{err}</div>}
         {tab === 'command' && <Command metrics={metrics} apps={apps} />}
         {tab === 'apps' && <Apps apps={apps} />}
         {tab === 'build' && <Build api={api} />}
-        {tab === 'ai' && <Ai api={api} tenant={tenant} />}
+        {tab === 'ai' && <Ai api={api} />}
         {tab === 'commerce' && <Commerce api={api} />}
         {tab === 'infra' && <Infra api={api} />}
         {tab === 'growth' && <Growth api={api} />}
@@ -162,11 +310,43 @@ function Build({ api }) {
   const [models, setModels] = useState([]);
   const [components, setComponents] = useState([]);
   const [brand, setBrand] = useState(null);
+  const [apps, setApps] = useState([]);
+  const [builder, setBuilder] = useState(null);
+  const [puckSchema, setPuckSchema] = useState(null);
+  const [imports, setImports] = useState([]);
   useEffect(() => {
-    Promise.all([api('/api/cms/models'), api('/api/components'), api('/api/brand')])
-      .then(([m, c, b]) => { setModels(m); setComponents(c); setBrand(b); })
+    Promise.all([
+      api('/api/cms/models'),
+      api('/api/components'),
+      api('/api/brand'),
+      api('/api/apps'),
+      api('/api/builders/puck/schema'),
+      api('/api/imports')
+    ])
+      .then(([m, c, b, a, schema, imp]) => {
+        setModels(m); setComponents(c); setBrand(b); setApps(a); setPuckSchema(schema); setImports(imp);
+      })
       .catch(() => {});
   }, [api]);
+
+  async function openBuilder(appId) {
+    setBuilder(await api(`/api/builders/apps/${appId}`));
+  }
+
+  async function savePuckDemo(appId) {
+    const open = await api(`/api/builders/apps/${appId}`);
+    await api('/api/builders/puck/pages', {
+      method: 'POST',
+      body: JSON.stringify({
+        applicationId: appId,
+        slug: 'home',
+        title: 'Home',
+        document: open.document || { content: [] }
+      })
+    });
+    setBuilder({ ...open, saved: true });
+  }
+
   return (
     <section className="split">
       <div>
@@ -186,18 +366,35 @@ function Build({ api }) {
           });
           setModels(await api('/api/cms/models'));
         }}>Add Announcement Model</button>
+        <h3>Builders</h3>
+        <ul>
+          {apps.filter((a) => ['wordpress', 'react', 'nextjs', 'commerce'].includes(a.app_type)).map((a) => (
+            <li key={a.id}>
+              {a.name} · {a.app_type}{' '}
+              <button type="button" onClick={() => openBuilder(a.id)}>Open</button>
+              {(a.app_type === 'react' || a.app_type === 'nextjs') && (
+                <button type="button" onClick={() => savePuckDemo(a.id)}>Save Puck draft</button>
+              )}
+            </li>
+          ))}
+        </ul>
+        {builder && (
+          <pre>{JSON.stringify(builder, null, 2)}</pre>
+        )}
       </div>
       <div>
-        <h3>Visual Components</h3>
+        <h3>Visual Components {puckSchema ? `(Puck ${puckSchema.components?.length || 0})` : ''}</h3>
         <ul>{components.map((c) => <li key={c.id}>{c.id} · {c.category}</li>)}</ul>
         <h3>Brand</h3>
         <pre>{JSON.stringify(brand?.profile || {}, null, 2)}</pre>
+        <h3>ZIP imports</h3>
+        <ul>{imports.map((i) => <li key={i.id}>{i.filename} · {i.status} · {i.scan_engine}</li>)}</ul>
       </div>
     </section>
   );
 }
 
-function Ai({ api, tenant }) {
+function Ai({ api }) {
   const [msgs, setMsgs] = useState([{ role: 'assistant', content: 'AI Workspace — website changes go through capabilities + approval.' }]);
   const [text, setText] = useState('');
   const [preview, setPreview] = useState(null);
@@ -226,14 +423,15 @@ function Ai({ api, tenant }) {
       }
       return;
     }
-    const r = await fetch(API + '/api/ai/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-tenant-id': tenant, 'x-actor-roles': 'platform.admin' },
-      body: JSON.stringify({ messages: [...msgs, { role: 'user', content: q }] })
-    });
-    const j = await r.json();
-    if (!r.ok) { setErr(j.error?.message || j.error); return; }
-    setMsgs((m) => [...m, { role: 'assistant', content: unwrap(j).content || j.content }]);
+    try {
+      const data = await api('/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [...msgs, { role: 'user', content: q }] })
+      });
+      setMsgs((m) => [...m, { role: 'assistant', content: data.content || data }]);
+    } catch (ex) {
+      setErr(ex.message);
+    }
   }
 
   async function approveAll() {
@@ -379,4 +577,4 @@ function Palette({ onClose, setTab }) {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<Root />);

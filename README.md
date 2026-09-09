@@ -75,4 +75,6 @@ This repository is designed to fail closed when optional external providers are 
 
 ## Production hardening
 
-Before production, add TLS certificates, edge/WAF policy, secrets manager, external object storage, immutable audit sink, backup/restore drills, CI image signing/SBOM, and a real deployment/provisioning provider for tenant websites.
+Before production: enable `BRIDGE_REQUIRE_JWT=1` and `BRIDGE_TRUST_HEADERS=0`, add TLS/WAF, external secrets manager (beyond lab AES-GCM), object storage for ZIP promote, JetStream durables, CORS allowlist, backup/restore drills, and a real hosting provisioner.
+
+Lab gap closures already include: jose JWKS, outbox relay + consumer inbox, Redis rate-limit/cache, ClickHouse writers (when `CLICKHOUSE_URL` set), ZIP quarantine, Puck/Gutenberg builder APIs, CI workflow.

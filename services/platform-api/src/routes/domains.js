@@ -2,9 +2,15 @@ import { ok, fail, audit, requireTenant } from '../lib/kernel.js';
 import { authorize } from '../lib/rbac.js';
 import { executeCapability, bumpUsage } from '../lib/capabilities.js';
 import { createWebsiteProviders } from '../providers/website.js';
+import { createBuilderProviders } from '../lib/builders.js';
+import { ingestZipImport, releaseZipImport } from '../lib/zip-import.js';
+import { sealSecret } from '../lib/secrets.js';
+import { cacheGet, cacheSet } from '../lib/redis.js';
+import { getDatabaseProvider, assertNotWordpressEngine } from '../providers/database.js';
 
-export function registerDomainRoutes(app, { pool, nc, sc }) {
+export function registerDomainRoutes(app, { pool }) {
   const websites = createWebsiteProviders({});
+  const builders = createBuilderProviders({ pool });
 
   // --- Navigation (capability-driven) ---
   app.get('/api/navigation', async (req) => {
@@ -30,10 +36,13 @@ export function registerDomainRoutes(app, { pool, nc, sc }) {
     return ok(filtered, ctx);
   });
 
-  // --- Command center metrics (real DB counts only) ---
+  // --- Command center metrics (real DB counts only; Redis cache optional) ---
   app.get('/api/command-center', async (req) => {
     const ctx = req.bridge;
     authorize(ctx, 'tenant.read');
+    const cacheKey = `command-center:${ctx.tenantId || 'global'}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached) return ok({ ...cached, cached: true }, ctx);
     const q = async (sql) => (await pool.query(sql)).rows[0].c;
     const metrics = {
       tenants: await q('SELECT COUNT(*)::int c FROM tenants'),
@@ -45,6 +54,7 @@ export function registerDomainRoutes(app, { pool, nc, sc }) {
       pendingApprovals: await q(`SELECT COUNT(*)::int c FROM changesets WHERE status='pending_approval'`),
       failedSagas: await q(`SELECT COUNT(*)::int c FROM sagas WHERE state='failed'`)
     };
+    await cacheSet(cacheKey, metrics, 15);
     return ok(metrics, ctx);
   });
 
@@ -415,23 +425,81 @@ export function registerDomainRoutes(app, { pool, nc, sc }) {
     if (!engine) throw fail('VALIDATION', 'engine required');
     const supported = ['postgresql', 'mysql', 'mariadb', 'sqlserver', 'mongodb'];
     if (!supported.includes(engine)) throw fail('VALIDATION', `unsupported engine ${engine}`);
-    // sqlserver/mongodb may be UNVERIFIED in local stack
-    const status = (engine === 'sqlserver' || engine === 'mongodb') ? 'UNVERIFIED' : 'READY';
-    const host = engine === 'postgresql' ? 'postgres' : engine === 'mongodb' ? null : 'wordpress-db';
-    const secretRef = `db:${t}:${databaseName || 'app'}`;
+
+    if (applicationId) {
+      const appRow = (await pool.query('SELECT * FROM apps WHERE id=$1 AND tenant_id=$2', [applicationId, t])).rows[0];
+      if (!appRow) throw fail('NOT_FOUND', 'application not found', 404);
+      try {
+        assertNotWordpressEngine(appRow.app_type, engine);
+      } catch (e) {
+        throw fail('VALIDATION', e.message, 400);
+      }
+    }
+
+    const provider = getDatabaseProvider(engine);
+    let provisioned;
+    try {
+      provisioned = await provider.provision({ tenantId: t, applicationId, databaseName });
+    } catch (e) {
+      throw fail('PROVIDER_ERROR', e.message, 502);
+    }
+
+    const secretRef = provisioned.secretRef || `db:${t}:${provisioned.databaseName || databaseName || 'app'}`;
+    const sealed = provisioned.secretPayload || (await sealSecret(`rotated-${Date.now()}`, {
+      tenantId: t,
+      appId: applicationId,
+      secretName: secretRef,
+      purpose: 'bridge-secret'
+    }));
     await pool.query(
-      `INSERT INTO secret_store(tenant_id,name,ciphertext,meta) VALUES($1,$2,$3,$4)
-       ON CONFLICT(tenant_id,name) DO NOTHING`,
-      [t, secretRef, Buffer.from(`rotated-${Date.now()}`).toString('base64'), { engine, note: 'value not returned to browser' }]
+      `INSERT INTO secret_store(tenant_id,name,ciphertext,meta,provider,key_ref) VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT(tenant_id,name) DO UPDATE SET ciphertext=excluded.ciphertext, meta=excluded.meta, provider=excluded.provider, key_ref=excluded.key_ref`,
+      [
+        t,
+        secretRef,
+        sealed.ciphertext,
+        { ...sealed.meta, engine, note: 'value not returned to browser' },
+        sealed.meta?.provider || 'lab',
+        sealed.meta?.kmsKeyId || null
+      ]
     );
     const r = await pool.query(
-      `INSERT INTO database_instances(tenant_id,application_id,engine,host,port,database_name,status,secret_ref)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [t, applicationId || null, engine, host, engine === 'postgresql' ? 5432 : 3306, databaseName || 'appdb', status, secretRef]
+      `INSERT INTO database_instances(tenant_id,application_id,engine,host,port,database_name,status,secret_ref,version,backup_policy)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        t,
+        applicationId || null,
+        provisioned.engine || engine,
+        provisioned.host,
+        provisioned.port,
+        provisioned.databaseName || databaseName || 'appdb',
+        provisioned.status || 'UNVERIFIED',
+        secretRef,
+        provisioned.version || null,
+        'none'
+      ]
     );
     await bumpUsage(pool, t, 'databases', 1);
-    await audit(pool, ctx, 'database.provision', 'database', r.rows[0].id, { engine, status });
+    await audit(pool, ctx, 'database.provision', 'database', r.rows[0].id, {
+      engine,
+      status: r.rows[0].status
+    });
     return reply.code(201).send(ok(r.rows[0], ctx));
+  });
+
+  app.get('/api/databases/providers/health', async (req) => {
+    const ctx = req.bridge;
+    authorize(ctx, 'app.read');
+    const engines = ['postgresql', 'mariadb', 'mongodb', 'sqlserver'];
+    const results = {};
+    for (const e of engines) {
+      try {
+        results[e] = await getDatabaseProvider(e).health();
+      } catch (err) {
+        results[e] = { ok: false, reason: err.message };
+      }
+    }
+    return ok(results, ctx);
   });
 
   // --- Workflows ---
@@ -498,6 +566,84 @@ export function registerDomainRoutes(app, { pool, nc, sc }) {
     return ok(row || { tenant_id: t, profile: {} }, ctx);
   });
 
+  // --- Visual builders (Puck + Gutenberg) ---
+  app.get('/api/builders/puck/schema', async (req) => {
+    const ctx = req.bridge;
+    authorize(ctx, 'cms.read');
+    return ok(await builders.puckSchema(), ctx);
+  });
+  app.get('/api/builders/apps/:appId', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'cms.read');
+    const appRow = (await pool.query('SELECT * FROM apps WHERE id=$1 AND tenant_id=$2', [req.params.appId, t])).rows[0];
+    if (!appRow) throw fail('NOT_FOUND', 'app not found', 404);
+    return ok(await builders.openBuilder(appRow), ctx);
+  });
+  app.get('/api/builders/gutenberg/:appId', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'wordpress.manage');
+    const appRow = (await pool.query('SELECT * FROM apps WHERE id=$1 AND tenant_id=$2', [req.params.appId, t])).rows[0];
+    if (!appRow) throw fail('NOT_FOUND', 'app not found', 404);
+    return ok(await builders.gutenbergDeepLink(appRow), ctx);
+  });
+  app.post('/api/builders/puck/pages', async (req, reply) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'cms.manage');
+    const { applicationId, slug = 'home', title = 'Home', document = {}, status = 'draft' } = req.body || {};
+    if (!applicationId) throw fail('VALIDATION', 'applicationId required');
+    const appRow = (await pool.query('SELECT * FROM apps WHERE id=$1 AND tenant_id=$2', [applicationId, t])).rows[0];
+    if (!appRow) throw fail('NOT_FOUND', 'app not found', 404);
+    const r = await pool.query(
+      `INSERT INTO puck_pages(tenant_id,application_id,slug,title,document,status)
+       VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT(tenant_id,application_id,slug)
+       DO UPDATE SET title=excluded.title, document=excluded.document, status=excluded.status, updated_at=now()
+       RETURNING *`,
+      [t, applicationId, slug, title, document, status]
+    );
+    await audit(pool, ctx, 'puck.page.save', 'puck_page', r.rows[0].id);
+    return reply.code(201).send(ok(r.rows[0], ctx));
+  });
+  app.get('/api/builders/puck/pages', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'cms.read');
+    const appId = req.query.applicationId;
+    const rows = appId
+      ? (await pool.query('SELECT * FROM puck_pages WHERE tenant_id=$1 AND application_id=$2 ORDER BY updated_at DESC', [t, appId])).rows
+      : (await pool.query('SELECT * FROM puck_pages WHERE tenant_id=$1 ORDER BY updated_at DESC', [t])).rows;
+    return ok(rows, ctx);
+  });
+
+  // --- ZIP import quarantine ---
+  app.post('/api/imports/zip', async (req, reply) => {
+    const ctx = req.bridge;
+    requireTenant(ctx);
+    authorize(ctx, 'app.manage');
+    const result = await ingestZipImport(pool, ctx, req.body || {});
+    await audit(pool, ctx, result.rejected ? 'zip.import.rejected' : 'zip.import.quarantined', 'zip_import', result.import.id, {
+      scan: result.import.scan_engine
+    });
+    return reply.code(result.rejected ? 422 : 202).send(ok(result, ctx));
+  });
+  app.post('/api/imports/:id/release', async (req) => {
+    const ctx = req.bridge;
+    requireTenant(ctx);
+    authorize(ctx, 'app.manage');
+    const row = await releaseZipImport(pool, ctx, req.params.id);
+    await audit(pool, ctx, 'zip.import.release', 'zip_import', row.id);
+    return ok(row, ctx);
+  });
+  app.get('/api/imports', async (req) => {
+    const ctx = req.bridge;
+    const t = requireTenant(ctx);
+    authorize(ctx, 'app.read');
+    return ok((await pool.query('SELECT id,filename,status,scan_engine,scan_detail,bytes,created_at,released_at FROM zip_imports WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 50', [t])).rows, ctx);
+  });
+
   // --- Global search (tenant scoped) ---
   app.get('/api/search', async (req) => {
     const ctx = req.bridge;
@@ -532,6 +678,6 @@ export function registerDomainRoutes(app, { pool, nc, sc }) {
     return reply.code(201).send(ok(r.rows[0], ctx));
   });
 
-  // keep nc/sc referenced for future event routes
-  void nc; void sc;
+  // keep pool referenced
+  void pool;
 }

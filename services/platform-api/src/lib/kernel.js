@@ -27,8 +27,10 @@ export function buildContext(req) {
   const claimedTenant = req.headers['x-tenant-id'] || req.query?.tenantId || null;
   const actor = {
     type: req.headers['x-actor-type'] || 'user',
-    id: req.headers['x-actor-id'] || req.user?.sub || 'anonymous',
-    roles: Array.isArray(req.user?.roles) ? req.user.roles : String(req.headers['x-actor-roles'] || 'platform.admin').split(',').filter(Boolean),
+    id: req.user?.sub || req.headers['x-actor-id'] || 'anonymous',
+    roles: Array.isArray(req.user?.roles) && req.user.roles.length
+      ? req.user.roles
+      : String(req.headers['x-actor-roles'] || 'platform.admin').split(',').filter(Boolean),
     email: req.user?.email || req.headers['x-actor-email'] || null,
     impersonating: null
   };
@@ -96,9 +98,37 @@ export async function audit(pool, ctx, action, resourceType, resourceId, metadat
       }
     ]
   );
+  // Soft analytics sink — never blocks control-plane writes
+  try {
+    const { writeAuditSink } = await import('./clickhouse.js');
+    writeAuditSink(ctx, action, resourceType, resourceId, metadata).catch(() => {});
+  } catch {
+    /* optional */
+  }
 }
 
 export function requireTenant(ctx) {
-  if (!ctx.tenantId) throw fail('TENANT_REQUIRED', 'x-tenant-id required', 400);
+  if (!ctx.tenantId) throw fail('TENANT_REQUIRED', 'x-tenant-id (authorized tenant) required', 400);
   return ctx.tenantId;
+}
+
+/** Deny-by-default tenant binding when JWT/production membership enforcement is on. */
+export async function authorizeTenantAccess(pool, ctx) {
+  if (!ctx.tenantId) return ctx;
+  const enforce =
+    process.env.BRIDGE_ENFORCE_TENANT_MEMBERSHIP === '1' ||
+    process.env.BRIDGE_REQUIRE_JWT === '1' ||
+    process.env.NODE_ENV === 'production';
+  if (!enforce) return ctx;
+  if (ctx.actor.roles.includes('platform.admin')) return ctx;
+  const row = (
+    await pool.query(`SELECT roles FROM tenant_memberships WHERE tenant_id=$1 AND actor_id=$2`, [
+      ctx.tenantId,
+      ctx.actor.id
+    ])
+  ).rows[0];
+  if (!row) throw fail('FORBIDDEN', 'actor is not a member of requested tenant', 403);
+  ctx.actor.roles = [...new Set([...(ctx.actor.roles || []), ...(row.roles || [])])];
+  ctx.membershipVerified = true;
+  return ctx;
 }

@@ -1,0 +1,15 @@
+{
+  "name": "bridge-outbox-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/relay.js",
+    "check": "node --check src/relay.js",
+    "test:unit": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "nats": "^2.29.0",
+    "pg": "^8.16.0"
+  }
+}

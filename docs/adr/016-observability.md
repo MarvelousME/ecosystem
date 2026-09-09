@@ -13,7 +13,9 @@ Operators need health, metrics, and audit for a multi-service lab stack.
 - Prometheus text metrics at `/metrics`; scrape config for API + NATS under `full` profile; optional Grafana.
 - Correlation/trace IDs on request context and provision events.
 - Postgres `audit_log` for control-plane actions.
-- ClickHouse reserved for future analytics writers.
+- ClickHouse reserved for analytics; writers soft-fail when `CLICKHOUSE_URL` is set.
+- Redis used for rate-limit and short TTL cache.
+- ZIP quarantine metrics via audit + optional CH sink.
 
 ## Consequences
 

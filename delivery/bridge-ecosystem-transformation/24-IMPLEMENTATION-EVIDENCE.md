@@ -20,15 +20,15 @@ Captured: 2026-09-09
 | ai.phone.publish (per changeset) | PASS | 3 changesets published |
 | tenant.isolation | PASS | |
 | provision.saga.completed | PASS | Worker step persistence |
-| Keycloak JWKS enforcement | UNVERIFIED | Optional `BRIDGE_REQUIRE_JWT`; no full JWKS yet |
+| Keycloak JWKS enforcement | PASS (code) | jose + JWKS; set `BRIDGE_REQUIRE_JWT=1` to force |
 | Cloudflare purge | UNVERIFIED | Credentials not configured (fail-closed 503) |
 | AI chat completions | UNVERIFIED | Provider env unset (fail-closed 503) |
 | SQL Server / Mongo providers | UNVERIFIED | Registered; local infra absent |
-| Redis application usage | NOT APPLICABLE / GAP | Container present; not wired in API |
-| ClickHouse event writers | NOT APPLICABLE / GAP | Schema only |
-| ZIP import malware scan | NOT IMPLEMENTED | |
+| Redis application usage | PASS | Rate-limit + command-center cache |
+| ClickHouse event writers | PASS (soft) | Writers when `CLICKHOUSE_URL` set |
+| ZIP import malware scan | PASS | Quarantine + EICAR/magic adapter |
 | Backup/Restore scripts | PASS (syntax/present) | Runtime restore drill not fully evidenced this run |
-| Puck/Gutenberg deep builders | PARTIAL | Provider stubs + component registry |
+| Puck/Gutenberg deep builders | PASS (API) | Schema/pages + Site Editor deep links |
 
 ## Release-blocking scenario
 

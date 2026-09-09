@@ -1,7 +1,8 @@
 # ADR: Gutenberg
 
-- **Status:** Proposed / catalog-only
+- **Status:** Accepted; deep-link provider READY
 - **Date:** 2026-09-09
+- **Updated:** 2026-09-09
 
 ## Context
 
@@ -9,10 +10,14 @@ WordPress-native editing is expected for WP apps.
 
 ## Decision
 
-Register `gutenberg-builder` as an `IVisualBuilderProvider` in the providers catalog. **Deep Gutenberg builder integration is not implemented** in this consolidation.
+`gutenberg-builder` implements `IVisualBuilderProvider` via API deep links:
+
+- `GET /api/builders/gutenberg/:appId` → Site Editor + pages list + connector health URLs
+- `GET /api/builders/apps/:appId` routes WordPress/commerce apps to Gutenberg
+
+Content apply still goes through `bridge-connector` + platform changesets (approval path unchanged).
 
 ## Consequences
 
-- Catalog communicates intent without fake UI.
-- Until implemented, edits go through connector page apply / platform changesets only.
-- Status for delivery evidence: **FAIL** (depth) / seed **PASS**.
+- Control Center Build tab can open Site Editor links without embedding the WP admin SPA.
+- Full in-iframe Gutenberg host remains future work; deep-link + connector is the supported integration.

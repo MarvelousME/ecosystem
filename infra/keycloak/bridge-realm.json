@@ -1,6 +1,73 @@
 {
-  "realm":"bridge","enabled":true,"registrationAllowed":false,
-  "clients":[{"clientId":"bridge-api","publicClient":true,"directAccessGrantsEnabled":true,"standardFlowEnabled":true,"redirectUris":["http://localhost:5173/*"],"webOrigins":["http://localhost:5173"]}],
-  "roles":{"realm":[{"name":"platform_admin"},{"name":"tenant_admin"},{"name":"tenant_user"}]},
-  "users":[{"username":"bridgeadmin","enabled":true,"email":"admin@example.test","credentials":[{"type":"password","value":"BridgeAdmin!123","temporary":false}],"realmRoles":["platform_admin"]}]
+  "realm": "bridge",
+  "enabled": true,
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "bridge-api",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"]
+    },
+    {
+      "clientId": "bridge-control-center",
+      "name": "Bridge Control Center",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:5173/auth/callback",
+        "http://localhost:5173/#/auth/callback",
+        "https://control.*/*",
+        "https://control.*/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "https://control.*"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-bridge-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "bridge-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "platform_admin" },
+      { "name": "tenant_admin" },
+      { "name": "tenant_user" }
+    ]
+  },
+  "users": [
+    {
+      "username": "bridgeadmin",
+      "enabled": true,
+      "email": "admin@example.test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "BridgeAdmin!123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["platform_admin"]
+    }
+  ]
 }

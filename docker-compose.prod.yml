@@ -1,0 +1,325 @@
+# Bridge Ecosystem — PRODUCTION compose (edge TLS via Traefik)
+# Usage: docker compose -f docker-compose.prod.yml --env-file .env up -d
+# Optional: --profile databases | --profile mongodb | --profile mssql | --profile full
+name: bridge-ecosystem
+
+services:
+  traefik:
+    image: traefik:v3.5
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      BRIDGE_DOMAIN: ${BRIDGE_DOMAIN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/traefik/dynamic:/etc/traefik/dynamic:ro
+      - letsencrypt_data:/letsencrypt
+    networks: [bridge]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/001-init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./infra/postgres/002-platform-expansion.sql:/docker-entrypoint-initdb.d/002-platform-expansion.sql:ro
+      - ./infra/postgres/003-gap-closures.sql:/docker-entrypoint-initdb.d/003-gap-closures.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [bridge]
+    restart: unless-stopped
+
+  db-migrate:
+    build:
+      context: ./infra/postgres
+      dockerfile: Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ./infra/postgres/migrations:/migrations:ro
+      - ./infra/postgres/003-gap-closures.sql:/migrations/003-gap-closures.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+    networks: [bridge]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    networks: [bridge]
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes: [nats_data:/data]
+    networks: [bridge]
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command:
+      - start
+      - --import-realm
+      - --http-enabled=true
+      - --hostname=https://auth.${BRIDGE_DOMAIN}
+      - --proxy-headers=xforwarded
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: https://auth.${BRIDGE_DOMAIN}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./infra/keycloak/bridge-realm.json:/opt/keycloak/data/import/bridge-realm.json:ro
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=bridge-ecosystem_bridge
+      - traefik.http.routers.keycloak.rule=Host(`auth.${BRIDGE_DOMAIN}`)
+      - traefik.http.routers.keycloak.entrypoints=websecure
+      - traefik.http.routers.keycloak.tls=true
+      - traefik.http.routers.keycloak.tls.certresolver=letsencrypt
+      - traefik.http.routers.keycloak.middlewares=bridge-sec-headers@file
+      - traefik.http.services.keycloak.loadbalancer.server.port=8080
+    networks: [bridge]
+    restart: unless-stopped
+
+  api:
+    build: ./services/platform-api
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      BRIDGE_JWT_ISSUER: ${BRIDGE_JWT_ISSUER}
+      BRIDGE_JWKS_URL: http://keycloak:8080/realms/bridge/protocol/openid-connect/certs
+      BRIDGE_JWT_AUDIENCE: ${BRIDGE_JWT_AUDIENCE:-bridge-api}
+      BRIDGE_REQUIRE_JWT: ${BRIDGE_REQUIRE_JWT:-1}
+      BRIDGE_TRUST_HEADERS: ${BRIDGE_TRUST_HEADERS:-0}
+      BRIDGE_SECRETS_PROVIDER: ${BRIDGE_SECRETS_PROVIDER:-aws-kms}
+      BRIDGE_KMS_KEY_ID: ${BRIDGE_KMS_KEY_ID:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BRIDGE_QUARANTINE_DIR: /data/quarantine
+      BRIDGE_CORS_ORIGINS: ${BRIDGE_CORS_ORIGINS}
+      # When using --profile full, set CLICKHOUSE_URL=http://clickhouse:8123
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
+      BRIDGE_AI_BASE_URL: ${BRIDGE_AI_BASE_URL:-}
+      BRIDGE_AI_API_KEY: ${BRIDGE_AI_API_KEY:-}
+      BRIDGE_AI_MODEL: ${BRIDGE_AI_MODEL:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      WORDPRESS_INTERNAL_URL: http://wordpress
+      MONGODB_URL: ${MONGODB_URL:-}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+      MSSQL_ENCRYPT: ${MSSQL_ENCRYPT:-1}
+      MSSQL_TRUST_CERT: ${MSSQL_TRUST_CERT:-0}
+    volumes:
+      - api_quarantine:/data/quarantine
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=bridge-ecosystem_bridge
+      - traefik.http.routers.api.rule=Host(`api.${BRIDGE_DOMAIN}`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls=true
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.routers.api.middlewares=bridge-sec-headers@file
+      - traefik.http.services.api.loadbalancer.server.port=4000
+    networks: [bridge]
+    restart: unless-stopped
+
+  outbox-relay:
+    build: ./services/outbox-relay
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
+      OUTBOX_BATCH: ${OUTBOX_BATCH:-50}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks: [bridge]
+    restart: unless-stopped
+
+  provision-worker:
+    build: ./services/provision-worker
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NATS_URL: nats://nats:4222
+      BRIDGE_JS_STREAM: ${BRIDGE_JS_STREAM:-BRIDGE_EVENTS}
+      BRIDGE_JS_DURABLE: ${BRIDGE_JS_DURABLE:-PROVISION_WORKER_V1}
+      BRIDGE_JS_FILTER: ${BRIDGE_JS_FILTER:-provision.requested}
+      BRIDGE_JS_ACK_WAIT_NS: ${BRIDGE_JS_ACK_WAIT_NS:-30000000000}
+      BRIDGE_JS_MAX_DELIVER: ${BRIDGE_JS_MAX_DELIVER:-5}
+      MONGODB_URL: ${MONGODB_URL:-}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      outbox-relay:
+        condition: service_started
+    networks: [bridge]
+    restart: unless-stopped
+
+  frontend-mcp:
+    build: ./services/frontend-mcp
+    environment:
+      PORT: 3100
+      BRIDGE_MCP_KEY: ${BRIDGE_MCP_KEY}
+    networks: [bridge]
+    restart: unless-stopped
+
+  control-center:
+    build: ./apps/control-center
+    environment:
+      VITE_BRIDGE_API_URL: ${VITE_BRIDGE_API_URL}
+    depends_on: [api]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=bridge-ecosystem_bridge
+      - traefik.http.routers.control.rule=Host(`control.${BRIDGE_DOMAIN}`)
+      - traefik.http.routers.control.entrypoints=websecure
+      - traefik.http.routers.control.tls=true
+      - traefik.http.routers.control.tls.certresolver=letsencrypt
+      - traefik.http.routers.control.middlewares=bridge-sec-headers@file
+      - traefik.http.services.control.loadbalancer.server.port=80
+    networks: [bridge]
+    restart: unless-stopped
+
+  wordpress-db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${WP_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${WP_DB_PASSWORD}
+    volumes: [wordpress_db:/var/lib/mysql]
+    networks: [bridge]
+    restart: unless-stopped
+
+  wordpress:
+    image: wordpress:7.1.0-php8.3-apache
+    depends_on: [wordpress-db]
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${WP_DB_PASSWORD}
+      BRIDGE_API_URL: http://api:4000
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./wordpress/plugins/bridge-connector:/var/www/html/wp-content/plugins/bridge-connector:ro
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=bridge-ecosystem_bridge
+      - traefik.http.routers.wordpress.rule=Host(`wp.${BRIDGE_DOMAIN}`)
+      - traefik.http.routers.wordpress.entrypoints=websecure
+      - traefik.http.routers.wordpress.tls=true
+      - traefik.http.routers.wordpress.tls.certresolver=letsencrypt
+      - traefik.http.routers.wordpress.middlewares=bridge-sec-headers@file
+      - traefik.http.services.wordpress.loadbalancer.server.port=80
+    networks: [bridge]
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0
+    profiles: ["mongodb", "databases"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-bridge}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+    volumes: [mongodb_data:/data/db]
+    networks: [bridge]
+    restart: unless-stopped
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["mssql", "databases"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD}
+    volumes: [mssql_data:/var/opt/mssql]
+    networks: [bridge]
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    profiles: ["full"]
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks: [bridge]
+    restart: unless-stopped
+    # Set CLICKHOUSE_URL=http://clickhouse:8123 when using --profile full
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["full"]
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [bridge]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: ["full"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+    networks: [bridge]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:
+  wordpress_db:
+  wordpress_data:
+  clickhouse_data:
+  api_quarantine:
+  letsencrypt_data:
+  mongodb_data:
+  mssql_data:
+
+networks:
+  bridge:
+    driver: bridge

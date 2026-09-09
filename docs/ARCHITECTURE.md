@@ -1,30 +1,34 @@
 # Architecture (As-Built)
 
-Branch: `bridge-ecosystem-platform` · Verdict context: **PARTIALLY TRANSFORMED**
+Branch: `bridge-ecosystem-platform` · Verdict context: **GAP CLOSURES LANDED** (lab-complete; external KMS/TLS still production hardening)
 
 ## Authority
 
 | Plane | Authority | Notes |
 |-------|-----------|-------|
 | Control plane SoR | PostgreSQL + `platform-api` | Tenants, apps, billing, CMS metadata, capabilities, workflows, agents, audit, sagas |
-| Identity | Keycloak (Compose) | JWT enforcement **optional** via `BRIDGE_REQUIRE_JWT`; **no full JWKS validation yet** |
+| Identity | Keycloak (Compose) | jose JWKS validation when Bearer present / `BRIDGE_REQUIRE_JWT=1`; lab headers when trusted |
 | Tenant app runtime | WordPress + MariaDB via `bridge-connector` | Not tenancy authority |
-| Cache | Redis (Compose) | Substrate present; **not used by API code** |
-| Events | NATS JetStream | Provision request/complete/fail subjects |
-| Analytics | ClickHouse (`full` profile) | DDL only; **no writers** |
+| Cache | Redis (Compose) | Rate-limit + command-center cache |
+| Events | NATS + outbox relay | `provision.requested` via outbox; worker `consumer_inbox` idempotency |
+| Analytics | ClickHouse (`full` + `CLICKHOUSE_URL`) | Soft-fail writers from audit + outbox |
 
 ```mermaid
 graph TB
   UI[React Control Center] --> API[Bridge Platform API]
   API --> PG[(PostgreSQL SoR)]
-  API -. optional Bearer gate .-> KC[Keycloak]
-  API --> N[NATS JetStream]
+  API --> KC[Keycloak JWKS]
+  API --> N[NATS]
+  API --> OX[Outbox Relay]
+  OX --> N
   N --> W[Provisioning Saga Worker]
+  W --> CI[(consumer_inbox)]
   API --> WP[WordPress + bridge-connector]
   WP --> MY[(MariaDB)]
-  API -. REDIS_URL unused .-> R[(Redis)]
+  API --> R[(Redis)]
+  API -. optional .-> CH[(ClickHouse)]
+  API --> Q[ZIP Quarantine]
   MCP[Frontend MCP]
-  CH[(ClickHouse optional)]
   API -. /metrics .-> P[Prometheus optional]
 ```
 
@@ -32,7 +36,7 @@ graph TB
 
 - Business rows are tenant-owned in Postgres (`isolation_mode` default `SHARED`).
 - Tenant-bound API operations require `x-tenant-id` (see `requireTenant`).
-- Default lab identity uses `x-actor-*` headers; production must resolve membership from validated claims (not implemented).
+- Lab identity may use `x-actor-*` headers; production/JWT mode resolves membership from validated claims.
 
 ## Capability path
 
@@ -41,19 +45,26 @@ Legacy routes (resources/affiliates) still call RBAC/SQL directly.
 
 ## Events / provisioning
 
-Provisioning inserts `sagas` + `outbox` and publishes `provision.requested`. Worker runs steps: validate → allocate DB → register app → bind domain → verify health → complete, recording `saga_steps`. Production still needs transactional outbox relay and consumer idempotency.
+Provisioning inserts `sagas` + `outbox` only. Outbox relay publishes `provision.requested`. Worker runs steps: validate → allocate DB → register app → bind domain → verify health → complete, recording `saga_steps`, with `consumer_inbox` dedupe.
 
-## Implemented expansion (post-baseline)
+## Builders / imports
 
-- Schema `infra/postgres/002-platform-expansion.sql`
-- Modular API: `lib/kernel.js`, `lib/rbac.js`, `lib/capabilities.js`, `providers/website.js`, `routes/domains.js`
-- Billing idempotency, CMS/brand, databases control plane, workflows, agents/changesets (multi-site phone-change), command-center metrics
+- Puck: schema + `puck_pages` documents
+- Gutenberg: Site Editor deep links
+- ZIP: quarantine + malware adapter + explicit release
+
+## Implemented expansion
+
+- Schema `infra/postgres/002-platform-expansion.sql` + `003-gap-closures.sql`
+- Modular API: kernel, auth (jose), redis, clickhouse, outbox, secrets, zip-import, builders
+- Billing idempotency, CMS/brand, databases, workflows, agents/changesets
 - Scripts: Test / Backup / Restore; unit tests under `services/platform-api/test/`
+- CI: unit + worker syntax + PHP lint + `docker compose config`
 
-## Known gaps
+## Remaining production hardening
 
-Full OIDC JWKS; Puck/Gutenberg deep builders; ZIP import; Redis/ClickHouse app integration; SQL Server/Mongo live providers (**UNVERIFIED**); TLS/secrets manager; CI workflows; golden-path E2E may be **UNVERIFIED** if Docker is unavailable or hangs.
+External KMS/secrets manager; TLS termination; JetStream durable consumers; full OIDC login UX in Control Center; SQL Server/Mongo live engines (**UNVERIFIED** without local infra); golden-path E2E when Docker available.
 
 ## ADRs
 
-See `docs/adr/` for decision records (isolation, identity, capabilities, NATS, Postgres, WordPress MySQL, Redis, ClickHouse, Gutenberg, Puck, providers, AI approval, workflow durability, provisioning saga, secrets, observability).
+See `docs/adr/` (isolation, identity, capabilities, NATS, Postgres, WordPress MySQL, Redis, ClickHouse, Gutenberg, Puck, providers, AI approval, workflow durability, provisioning saga, secrets, observability, ZIP quarantine).

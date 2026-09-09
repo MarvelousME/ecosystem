@@ -1,7 +1,8 @@
 # ADR: NATS JetStream
 
-- **Status:** Accepted (PARTIAL durability)
+- **Status:** Accepted (outbox relay + consumer inbox)
 - **Date:** 2026-09-09
+- **Updated:** 2026-09-09
 
 ## Context
 
@@ -9,10 +10,10 @@ Provisioning and future async work need a bus separate from HTTP.
 
 ## Decision
 
-Use **NATS with JetStream enabled** in Compose. Platform API publishes `provision.requested`; worker emits `provision.completed` / `provision.failed`. Persist intent in Postgres `outbox` + `sagas`.
+Use **NATS with JetStream enabled** in Compose. Persist intent in Postgres `outbox` + `sagas`. A background **outbox relay** publishes unpublished rows and sets `published_at` (no dual HTTP+NATS publish). Provision worker claims events in `consumer_inbox` (idempotent by `event_id`).
 
 ## Consequences
 
-- Decouples API from long-running provision.
-- Current code also publishes immediately (not only via outbox relay) — dual-path risk.
-- Consumer idempotency table still required for production.
+- API `/api/provision` only inserts saga + outbox; relay owns NATS publish.
+- Duplicate deliveries are skipped by the worker.
+- JetStream durable consumers remain a future hardening step; current path is core NATS subject + inbox table.

@@ -11,40 +11,36 @@
 
 ## Weaknesses
 
-- Optional JWT without JWKS.
-- Redis/ClickHouse present but unwired.
-- Visual builders catalog-only.
-- No CI; E2E UNVERIFIED.
-- Workflow “engine” is shallow.
-- Secrets are env/stub ciphertext.
+- Control Center still uses lab identity headers by default (OIDC login UX pending).
+- Workflow “engine” is shallow (CRUD + sync execute).
+- External KMS / edge TLS not wired.
+- SQL Server/Mongo providers UNVERIFIED without engines.
 
 ## Opportunities
 
-- Complete OIDC and drop header trust.
-- Wire Redis for sessions/rate limits; ClickHouse for audit analytics.
-- Implement Puck/Gutenberg providers behind capability contracts.
-- Add GitHub Actions: unit + compose smoke.
-- ZIP import for site bootstrap.
+- Control Center OIDC login; drop header trust in shared envs.
+- JetStream durable consumers + DLQ.
+- ZIP promote worker after quarantine release.
+- Compose E2E CI with Docker Engine.
 
 ## Threats
 
-- False production confidence from Compose “full” profile.
-- Spoofable admin headers in shared environments.
-- Dual content stores drift (WP vs platform CMS).
+- False production confidence from Compose “full” profile without KMS/TLS.
+- Dual content stores drift (WP vs platform CMS / puck_pages).
 - SQL Server/Mongo marked READY incorrectly if callers ignore UNVERIFIED status (API sets UNVERIFIED — good).
 
 ## Gap matrix (target vs now)
 
 | Target | Now | Gap status |
 |--------|-----|------------|
-| Identity authority enforced | Optional stub | FAIL |
+| Identity authority enforced | jose JWKS + gated headers | PASS (lab); enable `BRIDGE_REQUIRE_JWT=1` for shared |
 | Capability fabric | Seeded + execute helper | PARTIAL |
 | Multi-tenant isolation | Shared schema + header tenant | PARTIAL |
 | Durable workflows | DB rows + sync execute | PARTIAL |
-| Observability plane | Metrics stub | PARTIAL |
-| Builder UX | Absent | FAIL |
-| Evidence E2E | Missing | UNVERIFIED |
+| Observability plane | Metrics + audit + optional CH writers | PARTIAL |
+| Builder UX | Puck schema/pages + Gutenberg deep links | PASS (API); SPA host optional |
+| Evidence E2E | Unit + CI config; Docker E2E env-dependent | PARTIAL |
 
 ## Overall
 
-**PARTIALLY TRANSFORMED** — architecture direction locked; production completeness incomplete.
+**LAB-COMPLETE** — architecture direction locked; production completeness requires KMS/TLS/OIDC UX/JetStream durables.

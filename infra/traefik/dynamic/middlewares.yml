@@ -1,0 +1,18 @@
+# Traefik dynamic middlewares — Bridge security headers
+# SAMEORIGIN (not DENY) so Keycloak admin/account frames keep working.
+
+http:
+  middlewares:
+    bridge-sec-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+        customFrameOptionsValue: "SAMEORIGIN"
+        browserXssFilter: true
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"

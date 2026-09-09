@@ -17,6 +17,18 @@ jobs:
       - run: npm install
       - run: npm run check
       - run: npm run test:unit
+  worker-syntax:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/provision-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run check
   php-syntax:
     runs-on: ubuntu-latest
     steps:
@@ -25,3 +37,8 @@ jobs:
         with:
           php-version: '8.3'
       - run: php -l wordpress/plugins/bridge-connector/bridge-connector.php
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config -q
